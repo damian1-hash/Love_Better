@@ -1,0 +1,15 @@
+{
+  "name": "love-better",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Love Better – partner linking via invite codes",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
