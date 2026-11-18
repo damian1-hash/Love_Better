@@ -12,6 +12,12 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 
 **Us** (after linking with your partner):
 - **Days together:** counts from the day you linked, or from a date you set, with the next milestone and anniversary.
+**Us → Long distance** (a switch at the top of the Us tab):
+- **Right now:** set your status (free to talk, busy, asleep, awake) and see your partner's. Send a **good morning**, **good night** or **just because** note, either now (it buzzes their phone) or **waiting when they wake up** (it appears in their app from 07:00 their time).
+- **Open-when letters:** sealed letters ("Open when you miss me…") that stay hidden until opened, optionally locked until a date. The writer learns when one is opened.
+- **Photo wall:** share little moments. Photos are shrunk on the phone (max 1280 px), visible only to the two of you, and the wall keeps the latest 60.
+- **Press play together:** a shared countdown (15 s, 30 s or 1 min) so you both press play on a film or song at the same second. Your partner gets a notification and sees the same countdown.
+- **Virtual date night:** pick from 12 ideas for dates from afar, set a time, and both of you see a countdown in your own time zones.
 - **The distance between us** (for long-distance couples): how many km and miles apart you are and which cities you're in, both your local times (morning or night there, hours ahead or behind), and a countdown to your next visit with a visit count. Each phone shares only its city (rounded to about 10 km), and only after choosing to.
 - **Nudges:** one tap sends "Thinking of you", "Miss you", "Proud of you" or a hug. It pops up on your partner's screen and, with notifications on, on their phone.
 - **Today:** your partner's mood and what would help them, plus your **shared streak**: the days you both practised the reminder.
@@ -77,6 +83,8 @@ Without a database, the page still works and the Me tab explains what's missing.
 
 The phone rounds its location to about 100 m before sending it. The server caches results for each area (about 1 km) for a day, and the phone keeps its last 8 searches for a day. That keeps searches fast and the free quota safe. Each person can run up to 30 new searches a minute. The page credits Geoapify and OpenStreetMap contributors (ODbL), as their terms require.
 
+Notes set to "waiting when they wake up" appear on time, but don't buzz the phone at 07:00. Vercel's Hobby plan runs scheduled jobs only once a day, so an exact-time notification would need a scheduling service such as Upstash QStash.
+
 ## Accounts and sign-in
 
 There are no passwords. Each phone makes a secret **sign-in key** (25 characters), and the server only stores a hash of it. To use the same account on a new phone, copy the key or the **sign-in link** from the Me tab. Lose the key and the account is lost, so the app reminds people to save it.
@@ -110,6 +118,14 @@ Every request (except `/api/push/key` and the cron) sends `Authorization: Bearer
 | `PUT /api/us/tz` | `{ tz }` | Your time zone |
 | `PUT /api/us/reunion` | `{ date, place, today }` | Next visit (`date: null` removes it) |
 | `PUT /api/us/visits` | `{ visits }` | Correct the visit count |
+| `PUT /api/us/status` | `{ state }`: `free`, `busy`, `asleep`, `awake` | Your status |
+| `POST /api/us/notes` | `{ kind: morning\|night\|love, text, when: now\|wake }` | Send a note |
+| `POST /api/us/letters`, `DELETE /api/us/letters?id=` | `{ title, body, unlockDate }` | Write or delete a letter |
+| `POST /api/us/letters/open` | `{ id, today }` | Open a letter addressed to you |
+| `POST /api/us/photos`, `DELETE /api/us/photos?id=` | `{ data (image data URL), caption, w, h }` | Share or remove a photo (≤ 400 KB) |
+| `GET /api/us/photo?id=` | | The photo itself (needs your key) |
+| `POST /api/us/sync`, `DELETE /api/us/sync` | `{ title, delay }` | Start or cancel a press-play countdown |
+| `PUT /api/us/datenight` | `{ at (ms), idea }` | Plan (or clear with `at: null`) a date night |
 | `POST /api/us/dates`, `DELETE /api/us/dates?id=` | `{ title, date, yearly }` | |
 | `POST /api/us/ideas`, `PATCH /api/us/ideas`, `DELETE /api/us/ideas?id=` | `{ text }`, `{ id, done }` | |
 | `PUT /api/us/lang` | `{ scores }` | Quiz result |

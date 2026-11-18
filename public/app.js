@@ -219,7 +219,7 @@ async function loadMe() {
 }
 async function loadUs() {
   if (!linked()) { S.us = null; return renderAll(); }
-  try { S.us = await api("GET", "/api/us?date=" + today()); S.usErr = null; }
+  try { const t0 = Date.now(); S.us = await api("GET", "/api/us?date=" + today()); S.usErr = null; S.clockOffset = S.us.ldr.serverNow - (t0 + Date.now()) / 2; watchSync(); }
   catch (e) { S.usErr = e.message; if (e.code === "not_linked") return loadMe(); }
   checkNudge();
   syncTimeZone();
@@ -243,7 +243,8 @@ function setTab(t, fromHash) {
 }
 document.querySelectorAll(".tabbar button").forEach(b => b.addEventListener("click", () => setTab(b.dataset.go)));
 function tabFromHash() {
-  const t = location.hash.replace("#", "");
+  let t = location.hash.replace("#", "");
+  if (t === "apart") { S.usView = "apart"; ls.set("lb-us-view", "apart"); t = "us"; }
   if (TABS.includes(t)) { setTab(t, true); history.replaceState(null, "", location.pathname + location.search); }
 }
 window.addEventListener("hashchange", tabFromHash);
@@ -482,6 +483,230 @@ function renderLdrCard(U, t, P, p) {
   return card;
 }
 
+
+/* ---------------- Long distance view ---------------- */
+const STATUS = { free: ["📞", "Free to talk"], busy: ["💼", "Busy"], asleep: ["😴", "Asleep"], awake: ["☀️", "Awake"] };
+const NOTE_PRESETS = {
+  morning: ["Good morning, my love ☀️ I hope today is kind to you.", "Morning! First thought of the day: you.", "Rise and shine, gorgeous. I'm proud of you. Go get today."],
+  night: ["Good night, my love 🌙 Sleep well and dream of us.", "Closing my eyes and thinking of you. Sweet dreams.", "Night night. One day closer to seeing you."],
+  love: ["Just thinking about you 💭", "I miss you more than I can say.", "You make the distance worth it."],
+};
+const LETTER_TITLES = ["Open when you miss me", "Open when you can't sleep", "Open when you've had a bad day", "Open when you need a laugh", "Open when we've had a fight", "Open when you feel far away", "Open on our anniversary", "Open on your birthday"];
+const VIRTUAL_DATES = [
+  ["🍝", "Cook the same recipe on video", "Pick a recipe, shop for the same ingredients, and cook it together on a video call."],
+  ["🎬", "Movie night, pressed play together", "Choose a film, use “Press play together” below, and text your reactions."],
+  ["🌌", "Stargazing call", "Both step outside after dark and find the moon. Tell each other what you see."],
+  ["🎨", "Draw each other", "Ten minutes, video on, draw each other. Reveal at the same time."],
+  ["📚", "Two-person book club", "Read the same chapter this week, then talk about it over dinner."],
+  ["🎮", "Play a game together", "Heart Jump, an online board game, or a co-op game you both have."],
+  ["🍷", "Virtual tasting", "Same snack, drink or dessert on both ends. Rate each one out of 10."],
+  ["🗺️", "Plan your next trip", "Open a map and plan your next visit, day by day."],
+  ["🎶", "Make a playlist for each other", "Twenty minutes to make a playlist, then listen to each other's together."],
+  ["💌", "Write letters, read them aloud", "Write an open-when letter in this app, then read it to each other."],
+  ["🧘", "Stretch or workout together", "Follow the same video at the same time."],
+  ["❓", "36 questions", "Take turns asking deep questions, starting with today's question for two."],
+];
+const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
+
+const photoUrls = {};
+async function photoUrl(id) {
+  if (photoUrls[id]) return photoUrls[id];
+  const res = await fetch("/api/us/photo?id=" + encodeURIComponent(id), { headers: { Authorization: "Bearer " + KEY } });
+  if (!res.ok) throw new Error("photo");
+  return (photoUrls[id] = URL.createObjectURL(await res.blob()));
+}
+function loadImg(img, id) { photoUrl(id).then(u => { img.src = u; }).catch(() => { img.alt = "Couldn't load photo"; }); }
+
+// Shrink a photo on the phone before upload (max 1280 px, under ~380 KB).
+async function compressPhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    let scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight)), q = 0.82, data;
+    for (let tries = 0; tries < 6; tries++) {
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      data = c.toDataURL("image/jpeg", q);
+      if (data.length * 0.75 < 380 * 1024) return { data, w: c.width, h: c.height };
+      if (q > 0.6) q -= 0.12; else scale *= 0.8;
+    }
+    throw new Error("That photo is too big, even after shrinking.");
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// A simple bottom sheet for letters and photos.
+function sheet(...content) {
+  const close = () => wrap.remove();
+  const wrap = h("div", { class: "sheet-wrap", onclick: e => { if (e.target === wrap) close(); } },
+    h("div", { class: "sheet", role: "dialog", "aria-modal": "true" }, h("button", { class: "sheet-x", "aria-label": "Close", text: "×", onclick: close }), ...content));
+  document.body.append(wrap);
+  return close;
+}
+
+function renderApart(tab, U, t, P, p) {
+  const L = U.ldr;
+  tab.append(renderLdrCard(U, t, P, p));
+
+  // Right now: status + notes
+  const ps = L.status.partner, ms = L.status.me;
+  const noteKind = S.noteKind || "morning";
+  const noteTa = h("textarea", { class: "field", maxlength: 300, "aria-label": "Your note", oninput: e => saveDraft("note-" + noteKind, e.target.value) });
+  noteTa.value = draft["note-" + noteKind] ?? NOTE_PRESETS[noteKind][0];
+  const sendNote = async when => {
+    if (!noteTa.value.trim()) return;
+    try {
+      const n = await api("POST", "/api/us/notes", { kind: noteKind, text: noteTa.value, when });
+      delete draft["note-" + noteKind]; ls.set("lb-drafts", draft);
+      toast(noteKind === "night" ? "🌙" : noteKind === "morning" ? "☀️" : "💌", n.deliverAt > Date.now() + 60000 ? "It'll be waiting when " + p + " wakes up." : "Sent to " + p + ".");
+      loadUs();
+    } catch (e) { toast("⚠️", e.message); }
+  };
+  const pending = L.notes.fromMe.filter(n => n.deliverAt > Date.now());
+  tab.append(h("section", { class: "card", "aria-labelledby": "nowH" },
+    h("h2", { id: "nowH", text: "Right now" }),
+    ps ? h("p", { class: "status-line" }, h("span", { class: "big-emoji", text: STATUS[ps.state][0] }), h("span", {}, h("b", { text: P + ": " + STATUS[ps.state][1] }), h("span", { class: "small", text: " · " + ago(ps.at) })))
+       : h("p", { class: "sub", text: P + " hasn't set a status yet." }),
+    h("span", { class: "eyebrow", text: "You are" }),
+    h("div", { class: "chips" }, Object.entries(STATUS).map(([k, [e, l]]) => h("button", { class: "chip", "aria-pressed": String(!!(ms && ms.state === k)), onclick: async () => { await api("PUT", "/api/us/status", { state: k }).catch(() => {}); loadUs(); } }, e + " " + l))),
+    h("span", { class: "eyebrow", style: "margin-top:6px", text: "Send a note" }),
+    h("div", { class: "chips" }, [["morning", "☀️ Good morning"], ["night", "🌙 Good night"], ["love", "💌 Just because"]].map(([k, l]) => h("button", { class: "chip", "aria-pressed": String(noteKind === k), onclick: () => { S.noteKind = k; renderUs(); } }, l))),
+    h("div", { class: "chips" }, NOTE_PRESETS[noteKind].map(tx => h("button", { class: "chip small-chip", onclick: () => { noteTa.value = tx; saveDraft("note-" + noteKind, tx); } }, tx.length > 34 ? tx.slice(0, 32) + "…" : tx))),
+    noteTa,
+    h("div", { class: "row" },
+      h("button", { class: "btn accent", text: "Send now", onclick: () => sendNote("now") }),
+      noteKind === "morning" && U.partner.tz ? h("button", { class: "btn", text: "Have it waiting when they wake up", onclick: () => sendNote("wake") }) : null),
+    noteKind === "night" ? h("p", { class: "small", text: "Sending good night also sets you to “Asleep”." }) : null,
+    pending.length ? h("p", { class: "small", text: "⏰ " + plural(pending.length, "note") + " waiting for " + p + "'s morning (" + new Date(pending[0].deliverAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + " your time)." }) : null,
+    L.notes.toMe.length ? h("div", { class: "notes" }, h("span", { class: "eyebrow", text: "From " + P }), L.notes.toMe.slice(0, 3).map(n =>
+      h("div", { class: "answer" }, h("span", { class: "eyebrow", text: { morning: "☀️ Good morning", night: "🌙 Good night", love: "💌 Note" }[n.kind] + " · " + ago(n.deliverAt) }), h("p", { text: n.text })))) : null));
+
+  // Open-when letters
+  const inbox = L.letters.toMe, sent = L.letters.fromMe;
+  const titleSel = h("select", { class: "field", "aria-label": "Letter title" }, LETTER_TITLES.map(x => h("option", { text: x })), h("option", { value: "", text: "Something else…" }));
+  const customTitle = h("input", { class: "field", maxlength: 80, placeholder: "Open when…", "aria-label": "Your own title", hidden: true });
+  titleSel.onchange = () => { customTitle.hidden = titleSel.value !== ""; };
+  const bodyTa = h("textarea", { class: "field letter-paper", maxlength: 5000, placeholder: "Dear " + p + ",", "aria-label": "Your letter", oninput: e => saveDraft("letter", e.target.value) });
+  bodyTa.value = draft.letter || "";
+  const lockIn = h("input", { class: "field", type: "date", min: t, "aria-label": "Can't be opened before (optional)" });
+  const openLetter = async l => {
+    if (l.locked) return toast("🔒", "This one opens on " + fmtDate(l.unlockDate) + ".");
+    try {
+      const full = l.body ? l : await api("POST", "/api/us/letters/open", { id: l.id, today: t });
+      sheet(h("div", { class: "letter" }, h("p", { class: "eyebrow", text: "From " + P + " · " + fmtDate(new Date(full.at).toISOString().slice(0, 10)) }), h("h3", { text: full.title }), h("p", { class: "letter-body", text: full.body })));
+      if (!l.openedAt) loadUs();
+    } catch (e) { toast("⚠️", e.message); }
+  };
+  tab.append(h("section", { class: "card", "aria-labelledby": "lettersH" },
+    h("h2", { id: "lettersH", text: "Open-when letters" }),
+    inbox.length ? h("ul", { class: "list" }, inbox.map(l => h("li", {},
+      h("span", { class: "big-emoji", text: l.locked ? "🔒" : l.openedAt ? "📖" : "💌" }),
+      h("div", { class: "grow" }, h("strong", { text: l.title }), h("span", { class: "small", text: l.locked ? "Opens " + fmtDate(l.unlockDate) : l.openedAt ? "Opened " + ago(l.openedAt) : "From " + P + " · tap to open" })),
+      h("button", { class: "btn small" + (!l.openedAt && !l.locked ? " accent" : ""), text: l.locked ? "Locked" : l.openedAt ? "Read" : "Open", disabled: l.locked, onclick: () => openLetter(l) }))))
+      : h("p", { class: "sub", text: "Letters " + p + " writes you will wait here, sealed, until the right moment." }),
+    h("details", { open: S.writeLetter ? true : null, ontoggle: e => { S.writeLetter = e.target.open; } }, h("summary", { class: "linkbtn", text: "✍️ Write " + p + " a letter" }),
+      h("form", { style: "display:flex;flex-direction:column;gap:10px;margin-top:10px", onsubmit: async e => {
+        e.preventDefault();
+        const title = titleSel.value || customTitle.value;
+        try {
+          await api("POST", "/api/us/letters", { title, body: bodyTa.value, unlockDate: lockIn.value || null });
+          delete draft.letter; ls.set("lb-drafts", draft); S.writeLetter = false; toast("💌", "Sealed and sent to " + p + "."); loadUs();
+        } catch (err) { toast("⚠️", err.message); }
+      } }, titleSel, customTitle, bodyTa,
+        h("label", { class: "small", text: "Can't be opened before (optional)" }), lockIn,
+        h("button", { class: "btn accent", style: "align-self:flex-start", type: "submit", text: "Seal & send" }))),
+    sent.length ? h("details", {}, h("summary", { class: "linkbtn", text: "Letters you've sent (" + sent.length + ")" }), h("ul", { class: "list" }, sent.map(l => h("li", {},
+      h("div", { class: "grow" }, h("strong", { text: l.title }), h("span", { class: "small", text: l.openedAt ? "✓ Opened " + ago(l.openedAt) : l.unlockDate ? "Sealed until " + fmtDate(l.unlockDate) : "Not opened yet" })),
+      h("button", { class: "x", "aria-label": "Delete letter " + l.title, text: "×", onclick: async () => { if (confirm("Delete this letter? " + p + " won't be able to read it any more.")) { await api("DELETE", "/api/us/letters?id=" + l.id).catch(() => {}); loadUs(); } } }))))) : null));
+
+  // Photo wall
+  const fileIn = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async e => {
+    const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+    S.uploading = true; renderUs();
+    try {
+      const { data, w, h: hh } = await compressPhoto(f);
+      const caption = prompt("Add a caption? (optional)") || "";
+      await api("POST", "/api/us/photos", { data, w, h: hh, caption });
+      toast("📷", "Shared with " + p + ".");
+    } catch (err) { toast("⚠️", err.message || "Couldn't share that photo."); }
+    S.uploading = false; loadUs();
+  } });
+  tab.append(h("section", { class: "card", "aria-labelledby": "photosH" },
+    h("div", { class: "row between" }, h("h2", { id: "photosH", text: "Our photo wall" }),
+      h("button", { class: "btn small accent", disabled: !!S.uploading, text: S.uploading ? "Sharing…" : "📷 Add a photo", onclick: () => fileIn.click() })),
+    fileIn,
+    L.photos.length ? h("div", { class: "photos" }, L.photos.map(ph => {
+      const img = h("img", { alt: ph.caption || "Photo", loading: "lazy" }); loadImg(img, ph.id);
+      return h("button", { class: "photo", "aria-label": ph.caption || "Open photo", onclick: () => {
+        const big = h("img", { class: "photo-big", alt: ph.caption || "Photo" }); loadImg(big, ph.id);
+        const close = sheet(big, h("p", { class: "sub", text: (ph.from === S.me.id ? "You" : P) + " · " + ago(ph.at) + (ph.caption ? " · " + ph.caption : "") }),
+          ph.from === S.me.id ? h("button", { class: "linkbtn", style: "align-self:flex-start", text: "Remove photo", onclick: async () => { if (!confirm("Remove this photo for both of you?")) return; await api("DELETE", "/api/us/photos?id=" + ph.id).catch(() => {}); close(); loadUs(); } }) : null);
+      } }, img);
+    })) : h("p", { class: "sub", text: "Share little moments from your day: your coffee, your view, your outfit. Only the two of you can see them. The wall keeps your latest 60." })));
+
+  // Press play together
+  const syncTitle = h("input", { class: "field", maxlength: 80, placeholder: "What are you watching or listening to?", "aria-label": "What are you playing" });
+  tab.append(h("section", { class: "card", "aria-labelledby": "syncH" },
+    h("h2", { id: "syncH", text: "Press play together" }),
+    h("p", { class: "sub", text: "Watching a film or listening to a song at the same moment? Start a countdown and you'll both see “Press play now!” at exactly the same second." }),
+    syncTitle,
+    h("div", { class: "row" }, [[15, "In 15 s"], [30, "In 30 s"], [60, "In 1 min"]].map(([d, l]) => h("button", { class: "btn" + (d === 30 ? " accent" : ""), text: "▶ " + l, onclick: async () => {
+      try { await api("POST", "/api/us/sync", { title: syncTitle.value, delay: d }); await loadUs(); } catch (e) { toast("⚠️", e.message); }
+    } }))),
+    h("p", { class: "small", text: p.charAt(0).toUpperCase() + p.slice(1) + " gets a notification and sees the same countdown." })));
+
+  // Date night
+  const DN = L.datenight;
+  const whenIn = h("input", { class: "field", type: "datetime-local", "aria-label": "When" });
+  const ideaIn = h("input", { class: "field", maxlength: 120, placeholder: "What will you do?", "aria-label": "Date idea", value: S.dnIdea || "" });
+  const dnCard = h("section", { class: "card", "aria-labelledby": "dnH" }, h("h2", { id: "dnH", text: "Virtual date night" }));
+  if (DN && DN.at > Date.now() - 3 * 3600 * 1000 && !S.editDn) {
+    const mins = Math.round((DN.at - Date.now()) / 60000);
+    const left = mins <= 0 ? "Happening now 🕯️" : mins < 60 ? "in " + plural(mins, "minute") : mins < 1440 ? "in " + Math.floor(mins / 60) + " h " + (mins % 60) + " min" : "in " + plural(Math.round(mins / 1440), "day");
+    const at = new Date(DN.at);
+    dnCard.append(h("div", { class: "ldr-count" }, h("b", { style: "font-size:34px", text: left }),
+      h("span", { class: "sub", text: (DN.idea ? DN.idea + " · " : "") + at.toLocaleString([], { weekday: "long", hour: "numeric", minute: "2-digit" }) + " your time" + (U.partner.tz && U.partner.tz !== MY_TZ ? " · " + at.toLocaleString([], { timeZone: U.partner.tz, weekday: "short", hour: "numeric", minute: "2-digit" }) + " for " + p : "") })),
+      h("div", { class: "row" }, h("button", { class: "linkbtn", text: "Change", onclick: () => { S.editDn = true; renderUs(); } }),
+        h("button", { class: "linkbtn", text: "Cancel date", onclick: async () => { await api("PUT", "/api/us/datenight", { at: null }).catch(() => {}); loadUs(); } })));
+  } else {
+    dnCard.append(h("p", { class: "sub", text: "Pick an idea, set a time, and you'll both get a countdown. Times show in both your time zones." }),
+      h("form", { style: "display:flex;flex-direction:column;gap:10px", onsubmit: async e => {
+        e.preventDefault();
+        if (!whenIn.value) return toast("🕯️", "Pick a day and time.");
+        try { await api("PUT", "/api/us/datenight", { at: new Date(whenIn.value).getTime(), idea: ideaIn.value }); S.editDn = false; S.dnIdea = ""; loadUs(); } catch (err) { toast("⚠️", err.message); }
+      } }, ideaIn, whenIn, h("button", { class: "btn accent", style: "align-self:flex-start", type: "submit", text: "Plan date night" })));
+  }
+  dnCard.append(h("details", {}, h("summary", { class: "linkbtn", text: "Ideas for a date from afar" }),
+    h("ul", { class: "list" }, VIRTUAL_DATES.map(([e, title, how]) => h("li", {},
+      h("span", { class: "big-emoji", text: e }), h("div", { class: "grow" }, h("strong", { text: title }), h("span", { class: "small", text: how })),
+      h("button", { class: "btn small", text: "Pick", onclick: () => { S.dnIdea = title; S.editDn = true; renderUs(); document.getElementById("dnH").scrollIntoView({ behavior: "smooth" }); } }))))));
+  tab.append(dnCard);
+}
+
+/* ---------------- press-play overlay (any tab) ---------------- */
+let syncTimer = null;
+function watchSync() {
+  const s = S.us && S.us.ldr && S.us.ldr.sync;
+  const off = S.clockOffset || 0;
+  const el = $("syncOverlay");
+  if (!s || Date.now() + off > s.startAt + 8000) { if (el) el.remove(); clearInterval(syncTimer); syncTimer = null; return; }
+  if (!el) {
+    document.body.append(h("div", { class: "sync-overlay", id: "syncOverlay", role: "dialog", "aria-live": "assertive" },
+      h("p", { class: "eyebrow", id: "syncTitle" }), h("div", { class: "sync-n", id: "syncN" }), h("p", { class: "sub", id: "syncSub" }),
+      h("button", { class: "btn", text: "Cancel countdown", onclick: async () => { await api("DELETE", "/api/us/sync").catch(() => {}); S.us.ldr.sync = null; watchSync(); } })));
+  }
+  const tick = () => {
+    const left = (s.startAt - (Date.now() + off)) / 1000;
+    if (left < -8) return watchSync();
+    $("syncTitle").textContent = (s.by === S.me.id ? "You" : PartnerName()) + " started " + (s.title ? "“" + s.title + "”" : "a countdown");
+    $("syncN").textContent = left > 0 ? String(Math.ceil(left)) : "▶";
+    $("syncSub").textContent = left > 0 ? "Get ready to press play together…" : "Press play now! 💞";
+    $("syncOverlay").classList.toggle("go", left <= 0);
+  };
+  tick();
+  if (!syncTimer) syncTimer = setInterval(tick, 200);
+}
+
 /* ---------------- Us tab ---------------- */
 const draft = ls.get("lb-drafts", {});
 const saveDraft = (k, v) => { draft[k] = v; ls.set("lb-drafts", draft); };
@@ -517,6 +742,10 @@ function renderUs() {
   const U = S.us;
   if (!U) { tab.append(h("section", { class: "card" }, h("p", { class: "sub", text: S.usErr || "Loading…" }))); return; }
   const t = U.date, P = PartnerName(), p = partnerName();
+  S.usView = S.usView || ls.get("lb-us-view", "us");
+  tab.append(h("div", { class: "seg", role: "tablist" }, [["us", "💞 Us"], ["apart", "🌍 Long distance"]].map(([v, l]) =>
+    h("button", { role: "tab", "aria-selected": String(S.usView === v), onclick: () => { S.usView = v; ls.set("lb-us-view", v); renderUs(); window.scrollTo(0, 0); } }, l))));
+  if (S.usView === "apart") { renderApart(tab, U, t, P, p); if (usMsg) { tab.append(h("p", { class: "msg err", text: usMsg })); usMsg = ""; } return; }
 
   // Days together
   const [inDays, label] = milestone(U.together.days, U.together.since, t);
@@ -530,8 +759,6 @@ function renderUs() {
           sinceIn, h("button", { class: "btn accent small", type: "submit", text: "Save" }))
       : h("button", { class: "linkbtn", style: "align-self:flex-start", text: U.together.sinceSet ? "Change the date" : "Been together longer? Set the date", onclick: () => { S.editSince = true; renderUs(); } })));
 
-  // Long distance
-  tab.append(renderLdrCard(U, t, P, p));
   clearInterval(clockTimer); clockTimer = setInterval(tickClocks, 20000);
 
   // Nudges
@@ -1004,6 +1231,8 @@ function waitingCount() {
   if (S.us.question.partnerAnswered && !S.us.question.mine) n++;
   const nd = S.us.nudge;
   if (nd && nd.at > ls.get("lb-nudge-seen-badge", 0) && S.tab !== "us") n++;
+  const L = S.us.ldr;
+  if (L) n += L.letters.toMe.filter(l => !l.openedAt && !l.locked).length;
   return n;
 }
 async function updateBadge() {

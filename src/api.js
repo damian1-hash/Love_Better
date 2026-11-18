@@ -10,6 +10,7 @@ import { CoupleService } from "./couple.js";
 import { PushService } from "./push.js";
 import { userIdFromRequest } from "./auth.js";
 import { PlacesService } from "./places.js";
+import { LdrService } from "./ldr.js";
 
 const LIVE_MS = 6_000;     // a game screen that hasn't checked in for this long is gone
 const PRUNE_MS = 60_000;   // forget game screens this stale
@@ -26,6 +27,7 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
   const couples = new CoupleService(store, pairingOptions);
   const pushes = push ?? new PushService(store);
   const finder = places ?? new PlacesService(store);
+  const ldr = new LdrService(store, pairingOptions);
 
   function send(res, status, body) {
     res.statusCode = status;
@@ -34,16 +36,15 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
     res.end(JSON.stringify(body));
   }
 
-  async function readJson(req) {
+  async function readJson(req, max = 20_000) {
     if (req.body !== undefined && req.body !== null) {   // already parsed (Vercel)
       if (typeof req.body === "object" && !Buffer.isBuffer(req.body)) return req.body;
       try { return JSON.parse(String(req.body) || "{}"); } catch { throw new PairingError("bad_json", "Invalid JSON."); }
     }
-    let raw = "";
-    for await (const chunk of req) {
-      raw += chunk;
-      if (raw.length > 20_000) throw new PairingError("too_large", "Request too large.", 413);
-    }
+    // Read the whole body even when it's too big, so the reply doesn't cut the upload off mid-way.
+    let raw = "", size = 0;
+    for await (const chunk of req) { size += chunk.length; if (size <= max) raw += chunk; }
+    if (size > max) throw new PairingError("too_large", "Request too large.", 413);
     try { return raw ? JSON.parse(raw) : {}; } catch { throw new PairingError("bad_json", "Invalid JSON."); }
   }
 
@@ -117,13 +118,15 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
       case "DELETE /api/link": {
         const couple = await coupleOf(uid);
         await couples.deleteAll(couple);
+        await ldr.deleteAll(couple);
         return send(res, 200, await pairing.unlink(uid));
       }
 
       // ----- us -----
       case "GET /api/us": {
         const couple = await coupleOf(uid);
-        return send(res, 200, await couples.summary(uid, couple, q.get("date")));
+        const [summary, apart] = await Promise.all([couples.summary(uid, couple, q.get("date")), ldr.summary(uid, couple, q.get("date"))]);
+        return send(res, 200, { ...summary, ldr: apart });
       }
       case "GET /api/us/answers": {
         const couple = await coupleOf(uid);
@@ -156,6 +159,59 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const couple = await coupleOf(uid), { date, mood, need } = await readJson(req);
         return send(res, 200, await couples.setMood(uid, couple, date, mood, need));
       }
+      // ----- long distance: status, notes, letters, photos, play together, date night -----
+      case "PUT /api/us/status": {
+        const couple = await coupleOf(uid), { state } = await readJson(req);
+        return send(res, 200, await ldr.setStatus(uid, couple, state));
+      }
+      case "POST /api/us/notes": {
+        const couple = await coupleOf(uid), body = await readJson(req);
+        const note = await ldr.sendNote(uid, couple, body);
+        if (note.deliverAt <= Date.now() + 1000) {
+          const title = { morning: "Good morning ☀️", night: "Good night 🌙", love: "A note from " + (await nameOf(uid)) + " 💌" }[note.kind];
+          await notify(note.to, { title: note.kind === "love" ? title : title + " from " + (await nameOf(uid)), body: note.text, url: "/#apart", tag: "note", badge: true });
+        }
+        if (body.kind === "night") await ldr.setStatus(uid, couple, "asleep");
+        if (body.kind === "morning") await ldr.setStatus(uid, couple, "awake");
+        return send(res, 201, note);
+      }
+      case "POST /api/us/letters": {
+        const couple = await coupleOf(uid), letter = await ldr.writeLetter(uid, couple, await readJson(req));
+        await notify(letter.to, { title: (await nameOf(uid)) + " wrote you a letter 💌", body: "“" + letter.title + "”" + (letter.unlockDate ? " · opens " + letter.unlockDate : ""), url: "/#apart", tag: "letter", badge: true });
+        return send(res, 201, letter);
+      }
+      case "POST /api/us/letters/open": {
+        const couple = await coupleOf(uid), { id, today } = await readJson(req);
+        const { letter, first } = await ldr.openLetter(uid, couple, id, today);
+        if (first) await notify(letter.from, { title: (await nameOf(uid)) + " opened your letter 💌", body: "“" + letter.title + "”", url: "/#apart", tag: "letter-open" });
+        return send(res, 200, letter);
+      }
+      case "DELETE /api/us/letters": return send(res, 200, await ldr.deleteLetter(uid, await coupleOf(uid), q.get("id")));
+      case "POST /api/us/photos": {
+        const couple = await coupleOf(uid), photo = await ldr.addPhoto(uid, couple, await readJson(req, 700_000));
+        await notify(partnerOf(couple, uid), { title: (await nameOf(uid)) + " shared a photo 📷", body: photo.caption || "Open Love Better to see it.", url: "/#apart", tag: "photo", badge: true });
+        return send(res, 201, photo);
+      }
+      case "GET /api/us/photo": {
+        const { type, bytes } = await ldr.getPhoto(await coupleOf(uid), q.get("id"));
+        res.statusCode = 200;
+        res.setHeader("Content-Type", type);
+        res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+        return res.end(bytes);
+      }
+      case "DELETE /api/us/photos": return send(res, 200, await ldr.deletePhoto(uid, await coupleOf(uid), q.get("id")));
+      case "POST /api/us/sync": {
+        const couple = await coupleOf(uid), s = await ldr.startSync(uid, couple, await readJson(req));
+        await notify(partnerOf(couple, uid), { title: "Press play together ▶️", body: (await nameOf(uid)) + " is starting " + (s.title ? "“" + s.title + "”" : "something") + ". Open the app to join the countdown!", url: "/#apart", tag: "sync", urgency: "high" });
+        return send(res, 201, s);
+      }
+      case "DELETE /api/us/sync": return send(res, 200, await ldr.stopSync(await coupleOf(uid)));
+      case "PUT /api/us/datenight": {
+        const couple = await coupleOf(uid), body = await readJson(req), d = await ldr.planDateNight(uid, couple, body);
+        if (d && d.at) await notify(partnerOf(couple, uid), { title: "Date night planned 🕯️", body: (await nameOf(uid)) + " planned " + (d.idea ? "“" + d.idea + "”" : "a date night") + ". Open the app to see when.", url: "/#apart", tag: "datenight", badge: true });
+        return send(res, 200, d);
+      }
+
       // ----- long distance -----
       case "PUT /api/us/where": {
         const couple = await coupleOf(uid), { lat, lon } = await readJson(req);

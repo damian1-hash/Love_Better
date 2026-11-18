@@ -1,6 +1,6 @@
 // Love Better service worker: works offline (last-seen version of the app)
 // and shows push notifications.
-const CACHE = "lb-v5";
+const CACHE = "lb-v6";
 const SHELL = ["/", "/index.html", "/app.js", "/places-core.js", "/manifest.webmanifest", "/icon-192.png", "/logo-mark.png", "/favicon-32.png"];
 
 self.addEventListener("install", e => {

@@ -175,9 +175,10 @@ html.playing body { overflow: hidden; }
 .btn:disabled { opacity: .5; cursor: default; }
 .linkbtn { border: 0; background: none; color: var(--accent); font: 600 14px var(--body); cursor: pointer; padding: 4px 0; text-decoration: underline; text-underline-offset: 3px; }
 .field {
-  flex: 1 1 160px; min-width: 0; width: 100%; min-height: 46px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px;
+  flex: none; min-width: 0; width: 100%; min-height: 46px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px;
   background: var(--paper); color: var(--ink); font: 500 16px var(--body);
 }
+.row > .field { flex: 1 1 160px; width: auto; }
 textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 .field.code { border-radius: 999px; font-weight: 600; font-size: 18px; letter-spacing: .14em; text-transform: uppercase; }
 .field:focus-visible, .chip:focus-visible, .tabbar button:focus-visible, .linkbtn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -291,6 +292,32 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 .ldr-count { display: flex; flex-direction: column; gap: 4px; }
 .ldr-count b { font-family: var(--display); font-weight: 400; font-size: 44px; line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums; }
 .ldr-count b small { font-family: var(--body); font-size: 16px; font-weight: 600; color: var(--muted); }
+
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--leaf); border: 1px solid var(--line); border-radius: 999px; padding: 4px; gap: 4px; position: sticky; top: 8px; z-index: 4; box-shadow: 0 6px 16px -12px rgba(42,21,48,.5); }
+.seg button { border: 0; background: none; color: var(--muted); font: 600 15px var(--body); padding: 10px; border-radius: 999px; cursor: pointer; }
+.seg button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.status-line { display: flex; gap: 10px; align-items: center; }
+.big-emoji { font-size: 26px; line-height: 1; }
+.chip.small-chip { font-weight: 500; font-size: 13px; min-height: 34px; padding: 6px 11px; }
+.notes { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+select.field { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 14px) 50%; background-size: 6px 6px; background-repeat: no-repeat; padding-right: 36px; }
+.letter-paper { min-height: 160px; font-family: var(--display); font-size: 18px; line-height: 1.5; background: repeating-linear-gradient(var(--paper) 0 26px, var(--line) 26px 27px); }
+.photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.photo { border: 0; padding: 0; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--paper); cursor: pointer; }
+.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sheet-wrap { position: fixed; inset: 0; z-index: 30; background: rgba(20,8,24,.55); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { background: var(--leaf); width: min(100%, 620px); max-height: 90vh; overflow: auto; border-radius: 22px 22px 0 0; padding: 22px 18px calc(22px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; position: relative; }
+.sheet-x { position: absolute; top: 10px; right: 12px; border: 0; background: var(--paper); color: var(--ink); width: 36px; height: 36px; border-radius: 50%; font-size: 22px; cursor: pointer; }
+.photo-big { width: 100%; border-radius: 14px; display: block; }
+.letter h3 { font-family: var(--display); font-weight: 400; font-size: 28px; margin: 4px 0 8px; padding-right: 40px; }
+.letter-body { font-family: var(--display); font-size: 19px; line-height: 1.6; white-space: pre-wrap; margin: 0; }
+.sync-overlay { position: fixed; inset: 0; z-index: 40; background: var(--ink); color: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
+.sync-overlay .eyebrow, .sync-overlay .sub { color: var(--paper); opacity: .85; }
+.sync-n { font-family: var(--display); font-size: 160px; line-height: 1; font-variant-numeric: tabular-nums; }
+.sync-overlay.go { background: var(--accent); }
+.sync-overlay.go .sync-n { animation: pop .6s ease-out; }
+@keyframes pop { from { transform: scale(.6); } to { transform: scale(1); } }
+.sync-overlay .btn { color: var(--paper); border-color: rgba(255,255,255,.4); }
 </style>
 </head>
 <body>
