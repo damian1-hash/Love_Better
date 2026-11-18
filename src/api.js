@@ -245,7 +245,7 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
       }
       await route(req, res, url, path);
     } catch (err) {
-      if (err instanceof PairingError) return send(res, err.status, { error: err.code, message: err.message });
+      if (err instanceof PairingError) return send(res, err.status, { error: err.code, message: err.message, ...(err.detail ? { detail: err.detail } : {}) });
       console.error(err);
       send(res, 500, { error: "server_error", message: "Something went wrong. Try again." });
     }

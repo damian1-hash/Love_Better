@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MemoryStore } from "../src/store.js";
-import { PlacesService, parsePlaces, buildQuery, distanceM } from "../src/places.js";
+import { PlacesService, parsePlaces, buildQuery, distanceM, fetchOverpass } from "../src/places.js";
 import { createApp } from "../src/server.js";
 import { withServer, newKey } from "./helpers.js";
 
@@ -40,15 +40,33 @@ test("nearby searches validate input, filter by distance and are cached", async 
   await assert.rejects(svc.nearby("u1", { ...HERE, radius: 1000, cat: "nightclub" }), { code: "bad_category" });
 });
 
-test("if the first map server fails, the backup is used; if both fail, a friendly error", async () => {
+test("if the first map server fails, the next is tried straight away; if all fail, a friendly error", async () => {
   const urls = [];
   let fail = 1;
-  const fetchImpl = async url => { urls.push(url); if (fail-- > 0) return { ok: false, status: 504 }; return { ok: true, json: async () => SAMPLE }; };
+  const fetchImpl = async url => { urls.push(url); if (fail-- > 0) return { ok: false, status: 429 }; return { ok: true, json: async () => SAMPLE }; };
   const svc = new PlacesService(new MemoryStore(), { fetchImpl });
+  const t = Date.now();
   assert.equal((await svc.nearby("u", { ...HERE, radius: 2000, cat: "dinner" })).places.length, 3);
   assert.equal(urls.length, 2);
+  assert.ok(Date.now() - t < 1000, "didn't wait for the stagger after a fast failure");
   const down = new PlacesService(new MemoryStore(), { fetchImpl: async () => { throw new Error("offline"); } });
-  await assert.rejects(down.nearby("u", { ...HERE, radius: 2000, cat: "cafe" }), { code: "places_unavailable", status: 503 });
+  await assert.rejects(down.nearby("u", { ...HERE, radius: 2000, cat: "cafe" }), err => err.code === "places_unavailable" && err.status === 503 && err.detail.length === 4);
+});
+
+test("a slow map server doesn't hold things up: the next one starts after the stagger", async () => {
+  const started = [];
+  const fetchImpl = (url, init) => { started.push(url); return url.includes("overpass-api.de")
+    ? new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))))
+    : Promise.resolve({ ok: true, json: async () => SAMPLE }); };
+  const t = Date.now();
+  const r = await fetchOverpass("q", { fetchImpl, stagger: 100, timeout: 5000 });
+  assert.equal(r.server, "overpass.private.coffee");
+  assert.ok(Date.now() - t < 1000);
+  assert.equal(started.length, 2);
+  // a "timed out" remark with no results counts as a failure
+  const remark = await fetchOverpass("q", { fetchImpl: async url => ({ ok: true, json: async () => url.includes("overpass-api.de") ? { elements: [], remark: "runtime error: Query timed out" } : SAMPLE }), stagger: 50 });
+  assert.notEqual(remark.server, "overpass-api.de");
+  await assert.rejects(fetchOverpass("q", { fetchImpl: () => new Promise((_, rej) => setTimeout(() => rej(new Error("x")), 5)), stagger: 10, timeout: 50 }), e => e.errors.length === 4);
 });
 
 test("place search uses Nominatim with a proper User-Agent, and rate-limits", async () => {

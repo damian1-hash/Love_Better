@@ -559,13 +559,49 @@ function locate() {
     err => { X.locating = false; X.err = err.code === 1 ? "Location is blocked. Allow it in your browser settings, or search for a place instead." : "Couldn't find your location. Try again or search instead."; renderExplore(); },
     { enableHighAccuracy: false, timeout: 15000, maximumAge: 5 * 60000 });
 }
+// Places: the phone asks OpenStreetMap directly (shared map servers often
+// turn away requests from cloud hosts like Vercel), keeps answers for a day,
+// and only falls back to our server if every map server fails.
+let placesCore = null;
+const PLACE_CACHE_MS = 24 * 3600 * 1000;
+function cachedPlaces(k) {
+  const c = ls.get("lb-places-cache", {});
+  return c[k] && Date.now() - c[k].at < PLACE_CACHE_MS ? c[k].places : null;
+}
+function cachePlaces(k, places) {
+  const c = ls.get("lb-places-cache", {});
+  c[k] = { at: Date.now(), places };
+  const keys = Object.keys(c).sort((a, b) => c[b].at - c[a].at);
+  for (const old of keys.slice(8)) delete c[old];   // keep the 8 most recent searches
+  ls.set("lb-places-cache", c);
+}
+async function findPlaces(where, cat, radius) {
+  const k = [cat, radius, where.lat, where.lon].join("|");
+  const hit = cachedPlaces(k);
+  if (hit) return hit;
+  let places = null, directErr = null;
+  try {
+    placesCore = placesCore || await import("./places-core.js");
+    const { data } = await placesCore.fetchOverpass(placesCore.buildQuery(cat, where.lat, where.lon, radius), { stagger: 3500, timeout: 15000 });
+    places = placesCore.parsePlaces(cat, data, where.lat, where.lon).filter(p => p.distance <= radius);
+  } catch (e) { directErr = e; console.warn("Direct map lookup failed:", e.errors || e.message); }
+  if (!places) places = (await api("GET", "/api/places?lat=" + where.lat + "&lon=" + where.lon + "&radius=" + radius + "&cat=" + cat)).places;
+  cachePlaces(k, places);
+  return places;
+}
 async function loadPlaces() {
   if (!X.where) return renderExplore();
+  const ticket = (X.ticket = (X.ticket || 0) + 1);
   X.loading = true; X.err = ""; X.pick = null; renderExplore();
   try {
-    const r = await api("GET", "/api/places?lat=" + X.where.lat + "&lon=" + X.where.lon + "&radius=" + X.radius + "&cat=" + X.cat);
-    X.places = r.places;
-  } catch (e) { X.places = null; X.err = e.message; }
+    const places = await findPlaces(X.where, X.cat, X.radius);
+    if (ticket !== X.ticket) return;          // a newer search started meanwhile
+    X.places = places;
+  } catch (e) {
+    if (ticket !== X.ticket) return;
+    X.places = null;
+    X.err = e.code === "places_unavailable" ? "The map servers are busy right now. Try again in a minute." : e.message;
+  }
   X.loading = false; renderExplore();
 }
 async function searchArea(q) {
@@ -626,7 +662,8 @@ function renderExplore() {
   tab.append(head);
 
   if (!X.where) return;
-  if (X.loading) { tab.append(h("section", { class: "card" }, h("p", { class: "sub", text: "Finding lovely places…" }))); return; }
+  if (X.loading) { tab.append(h("section", { class: "card" }, h("p", { class: "sub", text: "Finding lovely places… this can take a few seconds." }))); return; }
+  if (X.err && !X.places) { tab.append(h("button", { class: "btn accent", style: "align-self:flex-start", text: "Try again", onclick: loadPlaces })); return; }
   if (!X.places) return;
   const cat = PLACE_CATS.find(c => c[0] === X.cat);
   if (!X.places.length) {

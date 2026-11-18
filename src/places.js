@@ -1,90 +1,17 @@
 // Romantic and fun places nearby, from OpenStreetMap.
 //
-// Places come from the Overpass API and place-name search from Nominatim,
+// The phone normally asks Overpass itself (see public/app.js); this server
+// route is the backup, and also does place-name search through Nominatim,
 // both free and keyless. Results are cached (by area, rounded to ~1 km) so we
 // stay well inside their fair-use policies. Data © OpenStreetMap contributors.
 
 import { PairingError } from "./pairing.js";
 
-export const CATEGORIES = {
-  dinner:  { label: "Romantic dinner", emoji: "🍷", filters: ['["amenity"="restaurant"]'] },
-  cafe:    { label: "Cafés & sweets",  emoji: "☕", filters: ['["amenity"="cafe"]', '["amenity"="ice_cream"]', '["shop"="pastry"]', '["shop"="chocolate"]', '["shop"="confectionery"]'] },
-  drinks:  { label: "Drinks",          emoji: "🍸", filters: ['["amenity"="bar"]', '["amenity"="pub"]', '["amenity"="biergarten"]', '["shop"="wine"]["tasting"="yes"]'] },
-  outdoors:{ label: "Outdoors",        emoji: "🌳", filters: ['["leisure"="park"]', '["leisure"="garden"]', '["tourism"="viewpoint"]', '["natural"="beach"]', '["leisure"="picnic_site"]', '["tourism"="picnic_site"]', '["leisure"="nature_reserve"]', '["leisure"="marina"]'] },
-  culture: { label: "Culture",         emoji: "🎭", filters: ['["tourism"="museum"]', '["tourism"="gallery"]', '["amenity"="theatre"]', '["amenity"="arts_centre"]', '["amenity"="planetarium"]', '["tourism"="attraction"]'] },
-  fun:     { label: "Fun & games",     emoji: "🎳", filters: ['["amenity"="cinema"]', '["leisure"="bowling_alley"]', '["leisure"="escape_game"]', '["leisure"="amusement_arcade"]', '["leisure"="miniature_golf"]', '["amenity"="karaoke_box"]', '["tourism"="theme_park"]', '["tourism"="zoo"]', '["tourism"="aquarium"]', '["leisure"="ice_rink"]', '["leisure"="trampoline_park"]', '["leisure"="water_park"]'] },
-};
-export const RADII = [1000, 2000, 5000, 10000];
+import { CATEGORIES, RADII, buildQuery, parsePlaces, fetchOverpass } from "../public/places-core.js";
+export { CATEGORIES, RADII, buildQuery, parsePlaces, distanceM, fetchOverpass } from "../public/places-core.js";
 
-const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const UA = "LoveBetter/1.0 (couples app; https://love-better.vercel.app)";
-
-// Human-friendly kind for a place, from its tags.
-const KINDS = [
-  ["amenity", { restaurant: "Restaurant", cafe: "Café", ice_cream: "Ice cream", bar: "Bar", pub: "Pub", biergarten: "Beer garden", theatre: "Theatre", arts_centre: "Arts centre", planetarium: "Planetarium", cinema: "Cinema", karaoke_box: "Karaoke" }],
-  ["shop", { pastry: "Pâtisserie", chocolate: "Chocolate shop", confectionery: "Sweet shop", wine: "Wine tasting" }],
-  ["leisure", { park: "Park", garden: "Garden", picnic_site: "Picnic spot", nature_reserve: "Nature reserve", marina: "Marina", bowling_alley: "Bowling", escape_game: "Escape room", amusement_arcade: "Arcade", miniature_golf: "Mini golf", ice_rink: "Ice rink", trampoline_park: "Trampoline park", water_park: "Water park" }],
-  ["tourism", { viewpoint: "Viewpoint", museum: "Museum", gallery: "Gallery", attraction: "Attraction", theme_park: "Theme park", zoo: "Zoo", aquarium: "Aquarium", picnic_site: "Picnic spot" }],
-  ["natural", { beach: "Beach" }],
-];
-function kindOf(tags) {
-  for (const [k, map] of KINDS) if (map[tags[k]]) return map[tags[k]];
-  return "Place";
-}
-
-// Little touches that make a place more date-worthy float up the list.
-function charm(tags) {
-  let s = 0;
-  if (tags.outdoor_seating === "yes") s += 1;
-  if (tags.website || tags["contact:website"]) s += 1;
-  if (tags.opening_hours) s += 1;
-  if (/wine|french|italian|seafood|sushi|tapas|fine|romantic/i.test(tags.cuisine || "")) s += 1;
-  if (tags.tourism === "viewpoint" || tags.natural === "beach" || tags.leisure === "garden") s += 1;
-  if (/fast_food|kebab|burger|chicken/i.test(tags.cuisine || "")) s -= 2;
-  return s;
-}
-
-export function distanceM(lat1, lon1, lat2, lon2) {
-  const R = 6371000, r = d => d * Math.PI / 180;
-  const a = Math.sin(r(lat2 - lat1) / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(r(lon2 - lon1) / 2) ** 2;
-  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
-}
-
-export function buildQuery(cat, lat, lon, radius) {
-  const around = `(around:${radius},${lat},${lon})`;
-  const parts = CATEGORIES[cat].filters.map(f => `nwr${f}["name"]${around};`).join("");
-  return `[out:json][timeout:20];(${parts});out center tags 300;`;
-}
-
-export function parsePlaces(cat, data, lat, lon) {
-  const seen = new Set(), out = [];
-  for (const el of data.elements || []) {
-    const t = el.tags || {}, plat = el.lat ?? el.center?.lat, plon = el.lon ?? el.center?.lon;
-    if (!t.name || plat == null || plon == null) continue;
-    if (t.access === "private" || t.disused === "yes") continue;
-    const key = t.name.toLowerCase() + "|" + plat.toFixed(3) + "|" + plon.toFixed(3);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const website = t.website || t["contact:website"] || null;
-    out.push({
-      id: el.type[0] + el.id,
-      name: t.name,
-      kind: kindOf(t),
-      cat,
-      lat: Number(plat.toFixed(6)), lon: Number(plon.toFixed(6)),
-      distance: distanceM(lat, lon, plat, plon),
-      cuisine: t.cuisine ? t.cuisine.split(";").map(s => s.trim().replace(/_/g, " ")).slice(0, 3).join(", ") : null,
-      hours: t.opening_hours || null,
-      website: website && /^https?:\/\//i.test(website) ? website : website ? "https://" + website : null,
-      outdoor: t.outdoor_seating === "yes",
-      charm: charm(t),
-    });
-  }
-  // Mostly by distance, nudged by charm (each charm point ≈ 300 m closer).
-  out.sort((a, b) => (a.distance - a.charm * 300) - (b.distance - b.charm * 300));
-  return out.slice(0, 60);
-}
 
 export class PlacesService {
   constructor(store, { fetchImpl = fetch, now = () => Date.now() } = {}) {
@@ -118,12 +45,12 @@ export class PlacesService {
       await this.#limit(uid);
       const clat = Number(lat.toFixed(2)), clon = Number(lon.toFixed(2));
       const q = buildQuery(cat, clat, clon, radius + 800);
-      let data, lastErr;
-      for (const url of OVERPASS) {
-        try { data = await this.#get(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(q) }); break; }
-        catch (e) { lastErr = e; }
+      let data;
+      try { ({ data } = await fetchOverpass(q, { fetchImpl: this.fetch, headers: { "User-Agent": UA }, stagger: 3000, timeout: 10000 })); }
+      catch (e) {
+        console.error("overpass failed:", (e.errors || [e.message]).join(" | "));
+        throw Object.assign(new PairingError("places_unavailable", "The map service is busy. Try again in a moment.", 503), { detail: e.errors });
       }
-      if (!data) { console.error("overpass failed", lastErr && lastErr.message); throw new PairingError("places_unavailable", "The map service is busy. Try again in a moment.", 503); }
       raw = (data.elements || []).map(e => ({ type: e.type, id: e.id, lat: e.lat, lon: e.lon, center: e.center, tags: e.tags }));
       await this.kv.set(ck, JSON.stringify(raw), { ex: 24 * 3600 });
     }
