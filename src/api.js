@@ -11,6 +11,7 @@ import { PushService } from "./push.js";
 import { userIdFromRequest } from "./auth.js";
 import { PlacesService } from "./places.js";
 import { LdrService } from "./ldr.js";
+import { ChatService, INLINE_TYPES } from "./chat.js";
 
 const LIVE_MS = 6_000;     // a game screen that hasn't checked in for this long is gone
 const PRUNE_MS = 60_000;   // forget game screens this stale
@@ -28,6 +29,7 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
   const pushes = push ?? new PushService(store);
   const finder = places ?? new PlacesService(store);
   const ldr = new LdrService(store, pairingOptions);
+  const chat = new ChatService(store, pairingOptions);
 
   function send(res, status, body) {
     res.statusCode = status;
@@ -119,14 +121,15 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const couple = await coupleOf(uid);
         await couples.deleteAll(couple);
         await ldr.deleteAll(couple);
+        await chat.deleteAll(couple);
         return send(res, 200, await pairing.unlink(uid));
       }
 
       // ----- us -----
       case "GET /api/us": {
         const couple = await coupleOf(uid);
-        const [summary, apart] = await Promise.all([couples.summary(uid, couple, q.get("date")), ldr.summary(uid, couple, q.get("date"))]);
-        return send(res, 200, { ...summary, ldr: apart });
+        const [summary, apart, chatStatus] = await Promise.all([couples.summary(uid, couple, q.get("date")), ldr.summary(uid, couple, q.get("date")), chat.status(uid, couple)]);
+        return send(res, 200, { ...summary, ldr: apart, chat: chatStatus });
       }
       case "GET /api/us/answers": {
         const couple = await coupleOf(uid);
@@ -159,6 +162,34 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const couple = await coupleOf(uid), { date, mood, need } = await readJson(req);
         return send(res, 200, await couples.setMood(uid, couple, date, mood, need));
       }
+      // ----- chat -----
+      case "GET /api/chat": return send(res, 200, await chat.list(uid, await coupleOf(uid), { after: q.get("after"), before: q.get("before") }));
+      case "POST /api/chat": {
+        const couple = await coupleOf(uid), body = await readJson(req, 4_600_000);
+        const msg = await chat.send(uid, couple, body);
+        const preview = msg.text ? (msg.text.length > 120 ? msg.text.slice(0, 117) + "…" : msg.text)
+          : msg.file.kind === "image" ? "📷 Photo" : msg.file.kind === "video" ? "🎥 Video" : "📎 " + msg.file.name;
+        await notify(partnerOf(couple, uid), { title: (await nameOf(uid)) + " 💬", body: preview, url: "/#chat", tag: "chat", badge: true });
+        return send(res, 201, msg);
+      }
+      case "DELETE /api/chat": return send(res, 200, await chat.unsend(uid, await coupleOf(uid), q.get("seq")));
+      case "POST /api/chat/read": {
+        const couple = await coupleOf(uid), { seq } = await readJson(req);
+        return send(res, 200, await chat.read(uid, couple, seq));
+      }
+      case "GET /api/chat/file": {
+        const { meta, bytes } = await chat.getFile(await coupleOf(uid), q.get("id"));
+        const inline = INLINE_TYPES.includes(meta.type);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", inline ? meta.type : "application/octet-stream");
+        res.setHeader("Content-Length", bytes.length);
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+        res.setHeader("Content-Disposition", (inline ? "inline" : "attachment") + "; filename*=UTF-8''" + encodeURIComponent(meta.name));
+        res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+        return res.end(bytes);
+      }
+
       // ----- long distance: status, notes, letters, photos, play together, date night -----
       case "PUT /api/us/status": {
         const couple = await coupleOf(uid), { state } = await readJson(req);

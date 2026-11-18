@@ -318,6 +318,39 @@ select.field { appearance: none; background-image: linear-gradient(45deg, transp
 .sync-overlay.go .sync-n { animation: pop .6s ease-out; }
 @keyframes pop { from { transform: scale(.6); } to { transform: scale(1); } }
 .sync-overlay .btn { color: var(--paper); border-color: rgba(255,255,255,.4); }
+
+.chat-head { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 3; background: var(--paper); padding: 8px 0; }
+.chat-head img { border-radius: 9px; }
+.chat-head div { display: flex; flex-direction: column; }
+.chat-head b { font-family: var(--display); font-weight: 400; font-size: 20px; }
+.chat-list { display: flex; flex-direction: column; gap: 4px; padding-bottom: 86px; }
+.chat-empty { text-align: center; color: var(--muted); margin: 40px 0; }
+.older { align-self: center; margin-bottom: 8px; }
+.day-sep { align-self: center; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 6px; }
+.bubble { max-width: 80%; align-self: flex-start; background: var(--leaf); border: 1px solid var(--line); color: var(--ink); border-radius: 18px 18px 18px 6px; padding: 8px 12px 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+.bubble.mine { align-self: flex-end; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); border-radius: 18px 18px 6px 18px; cursor: pointer; }
+.bubble.pending { opacity: .6; }
+.bubble.gone { font-style: italic; opacity: .7; background: transparent; color: var(--muted); border-style: dashed; }
+.bubble p { margin: 0; white-space: pre-wrap; word-wrap: break-word; font-size: 16px; line-height: 1.4; }
+.bubble .time { font-size: 11px; opacity: .7; align-self: flex-end; }
+.chat-img { display: block; width: 240px; max-width: 100%; max-height: 320px; object-fit: cover; border-radius: 12px; margin: -2px -6px 0; background: rgba(0,0,0,.08); cursor: zoom-in; }
+.chat-file { display: flex; gap: 10px; align-items: center; min-width: 220px; }
+.chat-file .grow { display: flex; flex-direction: column; min-width: 0; }
+.chat-file b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble.mine .chat-file .small { color: inherit; opacity: .8; }
+.bubble.mine .chat-file .btn { color: var(--accent-ink); border-color: rgba(255,255,255,.5); }
+.msg-actions { align-self: flex-end; margin: -2px 6px 4px; }
+.seen { align-self: flex-end; font-size: 12px; color: var(--muted); margin: -2px 6px 4px; }
+.composer { position: fixed; left: 0; right: 0; bottom: calc(62px + env(safe-area-inset-bottom)); z-index: 5; display: flex; gap: 8px; align-items: flex-end; padding: 8px 12px; background: var(--paper); border-top: 1px solid var(--line); }
+@media (min-width: 700px) { .composer { left: 50%; right: auto; width: 620px; transform: translateX(-50%); } }
+.composer textarea { flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); border-radius: 22px; padding: 10px 14px; font: 16px var(--body); background: var(--leaf); color: var(--ink); max-height: 140px; line-height: 1.35; }
+.composer textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+.attach-btn, .send-btn { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: var(--leaf); color: var(--ink); font: 600 24px var(--body); cursor: pointer; display: grid; place-items: center; }
+.send-btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-size: 18px; }
+.attach-menu { position: absolute; bottom: 62px; left: 12px; background: var(--leaf); border: 1px solid var(--line); border-radius: 16px; padding: 6px; display: flex; flex-direction: column; box-shadow: 0 14px 30px -12px rgba(42,21,48,.45); }
+.attach-menu button { display: flex; gap: 12px; align-items: center; border: 0; background: none; color: var(--ink); font: 600 16px var(--body); padding: 12px 16px; border-radius: 12px; cursor: pointer; text-align: left; }
+.attach-menu button:hover { background: var(--paper); }
+.attach-menu span { font-size: 22px; }
 </style>
 </head>
 <body>
@@ -371,6 +404,8 @@ select.field { appearance: none; background-image: linear-gradient(45deg, transp
 
   <div class="tab" id="tab-us" data-tab="us" hidden></div>
 
+  <div class="tab" id="tab-chat" data-tab="chat" hidden></div>
+
   <div class="tab" id="tab-explore" data-tab="explore" hidden></div>
 
   <div class="tab" id="tab-play" data-tab="play" hidden>
@@ -390,8 +425,8 @@ select.field { appearance: none; background-image: linear-gradient(45deg, transp
 <nav class="tabbar" aria-label="Sections">
   <button data-go="today" aria-current="page"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>Today</button>
   <button data-go="us"><svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/></svg><i class="dot" id="usDot" hidden></i>Us</button>
+  <button data-go="chat"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z"/></svg><i class="dot" id="chatDot" hidden></i>Chat</button>
   <button data-go="explore"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>Explore</button>
-  <button data-go="play"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="5"/><path d="M8 10.5v4M6 12.5h4M15.5 11.5h.01M17.5 13.5h.01"/></svg>Play</button>
   <button data-go="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.2-3.6 4-5.3 7.5-5.3s6.3 1.7 7.5 5.3"/></svg><i class="dot" id="meDot" hidden></i>Me</button>
 </nav>
 

@@ -26,13 +26,15 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 - **Dates to remember:** birthdays, anniversaries and trips, with countdowns. They can repeat every year.
 - **Date ideas:** a shared list you both add to and tick off, with suggestions and a "Surprise me" button.
 
+**Chat** (after linking): a private chat for the two of you. The **＋** button takes a photo with the **camera**, picks **photos and videos** from your library, or attaches any **file**. Photos are shrunk on the phone; videos and files can be up to 3 MB. It shows "Seen" receipts, lets you **unsend** your own messages (tap one), sends notifications, and adds unread messages to the app icon badge. The newest 1,000 messages are kept. Only photos and videos display inside the app; every other file is a plain download, so an uploaded file can never run code in the app.
+
 **Explore:** romantic and fun places near you, or near any town you search for. Pick a kind of place (romantic dinner, cafés & sweets, drinks, outdoors, culture, fun & games) and a distance (1–10 km). Each place shows its distance, walking time, cuisine, opening hours and outdoor seating, plus buttons for directions and its website. **Pick for us** chooses one for you, and **Save for a date** adds a place to your shared date ideas. Places come from **Geoapify** (fast, built on OpenStreetMap data). Without a Geoapify key, the phone asks OpenStreetMap's free servers directly instead, which works but can be slow.
 
-**Play:** Heart Jump, the two-phone game, and the love-language quiz.
+**Games:** Heart Jump, the two-phone game, and the love-language quiz, at the bottom of the Us tab.
 
 **Me:** your name, partner linking, your sign-in key, notifications, and installing the app.
 
-**App icon badge and shortcuts:** once installed, the app icon shows a red number when your partner nudges you or answers the question for two. On Android, long-press the icon for shortcuts to Question for two, Send a nudge, Places for two and Heart Jump. True home-screen widgets need a native app.
+**App icon badge and shortcuts:** once installed, the app icon shows a red number when your partner nudges you or answers the question for two. On Android, long-press the icon for shortcuts to Chat, Question for two, Places for two and Heart Jump. True home-screen widgets need a native app.
 
 **Install and notifications:** the app installs to the home screen and works offline. It can send a morning reminder and a ping when your partner nudges you or answers the question.
 
@@ -50,6 +52,8 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 | `src/pairing.js` | Linking with invite codes |
 | `src/couple.js` | Everything a couple shares |
 | `src/push.js` | Web Push notifications (no dependencies) |
+| `src/chat.js` | Chat messages and attachments |
+| `src/ldr.js` | Long-distance features: status, notes, letters, photo wall, press play together, date night |
 | `src/places.js` | Nearby places from Geoapify, and place search (Nominatim), cached |
 | `public/places-core.js` | Place categories and the OpenStreetMap fallback, shared by phone and server |
 | `src/store.js`, `src/kv.js` | Storage: Upstash Redis on Vercel, in-memory locally |
@@ -131,6 +135,11 @@ Every request (except `/api/push/key` and the cron) sends `Authorization: Bearer
 | `PUT /api/us/lang` | `{ scores }` | Quiz result |
 | `GET /api/places` | `?lat=&lon=&radius=1000\|2000\|5000\|10000&cat=dinner\|cafe\|drinks\|outdoors\|culture\|fun` | Places nearby |
 | `GET /api/places/search` | `?q=` | Find a town or area |
+| `GET /api/chat` | `?after=N` or `?before=N` | Messages (newest 50, after #N, or 50 before #N), plus read receipts |
+| `POST /api/chat` | `{ text, file: { name, type, data (base64), w, h } }` | Send a message (file ≤ 3 MB) |
+| `DELETE /api/chat?seq=` | | Unsend your message |
+| `POST /api/chat/read` | `{ seq }` | Mark messages read |
+| `GET /api/chat/file?id=` | | An attachment (needs your key) |
 | `GET /api/push/key` | | Public key for notifications |
 | `POST /api/push/subscribe`, `DELETE /api/push/subscribe` | `{ subscription }`, `{ endpoint }` | |
 | `POST /api/push/test` | | Sends yourself a test notification |

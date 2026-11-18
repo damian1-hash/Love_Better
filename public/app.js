@@ -228,7 +228,7 @@ async function loadUs() {
 }
 
 /* ---------------- tabs ---------------- */
-const TABS = ["today", "us", "explore", "play", "me"];
+const TABS = ["today", "us", "chat", "explore", "me"];
 function setTab(t, fromHash) {
   if (!TABS.includes(t)) t = "today";
   S.tab = t; ls.set("lb-tab", t);
@@ -238,6 +238,7 @@ function setTab(t, fromHash) {
   }
   if (!fromHash) window.scrollTo(0, 0);
   if (t === "us" && linked()) loadUs();
+  if (t === "chat") openChat(); else clearTimeout(CH.timer);
   if (t === "explore" && X.where && !X.places && !X.loading) loadPlaces();
   renderAll();
 }
@@ -306,7 +307,7 @@ function renderMe() {
       h("p", { class: "small", text: "Since " + new Date(L.linkedAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) }),
       h("div", { class: "row" }, h("button", { class: "btn small", text: "Unlink", onclick: async () => {
         if (!confirm("Unlink from " + (L.partnerName || "your partner") + "? Your shared answers, dates and ideas will be deleted for both of you.")) return;
-        try { await api("DELETE", "/api/link"); say("Unlinked."); S.us = null; await loadMe(); } catch (e) { say(e.message, true); }
+        try { await api("DELETE", "/api/link"); say("Unlinked."); S.us = null; chatReset(); await loadMe(); } catch (e) { say(e.message, true); }
       } })));
   } else {
     const inv = L.invite;
@@ -358,7 +359,7 @@ function renderMe() {
         const k = normKey(keyIn.value);
         if (!validKey(k)) return say("That key doesn't look right. It's 25 letters and numbers.", true);
         if (!confirm("Switch this phone to that account? Save this phone's current key first if you still need it.")) return;
-        KEY = k; ls.set("lb-key", k); ls.del("lb-key-new"); S.me = null; S.us = null; say("Signed in."); loadMe();
+        KEY = k; ls.set("lb-key", k); ls.del("lb-key-new"); S.me = null; S.us = null; chatReset(); say("Signed in."); loadMe();
       } }, keyIn, h("button", { class: "btn", type: "submit", text: "Sign in" })))));
 
   // Notifications
@@ -707,10 +708,196 @@ function watchSync() {
   if (!syncTimer) syncTimer = setInterval(tick, 200);
 }
 
+
+/* ---------------- Chat ---------------- */
+const CH = { msgs: [], last: 0, partnerRead: 0, hasOlder: false, built: false, timer: null, loading: false, openMine: null };
+const MAX_FILE = 3 * 1024 * 1024;
+const fileUrls = {};
+async function chatFileUrl(id) {
+  if (fileUrls[id]) return fileUrls[id];
+  const res = await fetch("/api/chat/file?id=" + encodeURIComponent(id), { headers: { Authorization: "Bearer " + KEY } });
+  if (!res.ok) throw new Error("file");
+  return (fileUrls[id] = URL.createObjectURL(await res.blob()));
+}
+const fmtSize = b => b < 1024 ? b + " B" : b < 1048576 ? Math.round(b / 1024) + " KB" : (b / 1048576).toFixed(1) + " MB";
+const readAsDataURL = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+
+function chatReset() { clearTimeout(CH.timer); Object.assign(CH, { msgs: [], last: 0, partnerRead: 0, hasOlder: false, built: false, timer: null, edit: null }); }
+
+function buildChat() {
+  const tab = $("tab-chat"); tab.replaceChildren();
+  if (!linked()) {
+    tab.append(h("section", { class: "card", style: "align-items:flex-start" }, h("h2", { text: "Your private chat" }),
+      h("p", { class: "sub", text: "Link with your partner to chat, and share photos, videos and files with them only." }),
+      h("button", { class: "btn accent", text: "Link with your partner", onclick: () => setTab("me") })));
+    CH.built = false; return;
+  }
+  const closeMenu = () => { const m = $("attachMenu"); if (m) m.hidden = true; const b = document.querySelector(".attach-btn"); if (b) b.setAttribute("aria-expanded", "false"); };
+  const pick = (accept, capture) => h("input", { type: "file", accept, capture, hidden: true, onchange: e => { closeMenu(); const f = e.target.files[0]; e.target.value = ""; if (f) sendFile(f); } });
+  const cam = pick("image/*", "environment"), media = pick("image/*,video/*"), any = pick("");
+  const menu = h("div", { class: "attach-menu", id: "attachMenu", hidden: true },
+    h("button", { type: "button", onclick: () => { menu.hidden = true; cam.click(); } }, h("span", { text: "📷" }), "Camera"),
+    h("button", { type: "button", onclick: () => { menu.hidden = true; media.click(); } }, h("span", { text: "🖼️" }), "Photos & videos"),
+    h("button", { type: "button", onclick: () => { menu.hidden = true; any.click(); } }, h("span", { text: "📎" }), "File"));
+  const ta = h("textarea", { id: "chatText", rows: 1, maxlength: 4000, placeholder: "Message " + partnerName() + "…", "aria-label": "Message",
+    oninput: e => { saveDraft("chat", e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(140, e.target.scrollHeight) + "px"; },
+    onkeydown: e => { if (e.key === "Enter" && !e.shiftKey && !/iphone|ipad|android/i.test(navigator.userAgent)) { e.preventDefault(); form.requestSubmit(); } } });
+  ta.value = draft.chat || "";
+  const form = h("form", { class: "composer", onsubmit: e => { e.preventDefault(); sendText(); } },
+    h("button", { type: "button", class: "attach-btn", "aria-label": "Add a photo, video or file", "aria-expanded": "false", text: "+", onclick: e => { menu.hidden = !menu.hidden; e.currentTarget.setAttribute("aria-expanded", String(!menu.hidden)); } }),
+    ta, h("button", { type: "submit", class: "send-btn", "aria-label": "Send", text: "➤" }), cam, media, any, menu);
+  tab.append(h("div", { class: "chat-head" }, h("img", { src: "logo-mark.png", alt: "", width: 32, height: 32 }), h("div", {}, h("b", { text: PartnerName() }), h("span", { class: "small", id: "chatSub", text: "Only the two of you can see this chat." }))),
+    h("div", { class: "chat-list", id: "chatList", "aria-live": "polite" }), form);
+  CH.built = true;
+  drawMessages(true);
+  if (!CH.outsideClose) {   // tapping anywhere else closes the + menu
+    CH.outsideClose = true;
+    document.addEventListener("click", e => { if (!e.target.closest(".attach-menu, .attach-btn")) closeMenu(); });
+  }
+}
+
+function drawMessages(scroll) {
+  const list = $("chatList"); if (!list) return;
+  const nearBottom = window.innerHeight + window.scrollY > document.body.scrollHeight - 160;
+  list.replaceChildren();
+  if (CH.hasOlder) list.append(h("button", { class: "linkbtn older", text: "Load earlier messages", onclick: loadOlder }));
+  if (!CH.msgs.length) list.append(h("p", { class: "chat-empty", text: CH.loading ? "Loading…" : "Say hi to " + partnerName() + " 👋" }));
+  let lastDay = "", lastMine = [...CH.msgs].reverse().find(m => m.from === S.me.id && !m.deleted && !m.pending);
+  for (const m of CH.msgs) {
+    const d = new Date(m.at), day = d.toDateString();
+    if (day !== lastDay) { lastDay = day; list.append(h("div", { class: "day-sep", text: day === new Date().toDateString() ? "Today" : d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" }) })); }
+    const mine = m.from === S.me.id;
+    const bubble = h("div", { class: "bubble" + (mine ? " mine" : "") + (m.deleted ? " gone" : "") + (m.pending ? " pending" : ""), "data-seq": m.seq });
+    if (m.deleted) bubble.append(h("span", { text: mine ? "You unsent a message" : "Message unsent" }));
+    else {
+      if (m.file) bubble.append(fileView(m.file));
+      if (m.text) bubble.append(h("p", { text: m.text }));
+    }
+    bubble.append(h("span", { class: "time", text: m.pending ? "Sending…" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) }));
+    if (mine && !m.deleted && !m.pending) bubble.addEventListener("click", ev => { if (ev.target.closest("a,button,video")) return; CH.openMine = CH.openMine === m.seq ? null : m.seq; drawMessages(); });
+    list.append(bubble);
+    if (mine && CH.openMine === m.seq) list.append(h("div", { class: "msg-actions" }, h("button", { class: "linkbtn", text: "Unsend", onclick: async () => {
+      if (!confirm("Unsend this message? It disappears for both of you.")) return;
+      try { await api("DELETE", "/api/chat?seq=" + m.seq); m.deleted = true; delete m.file; delete m.text; CH.openMine = null; if (CH.edit != null) CH.edit++; drawMessages(); } catch (e) { toast("⚠️", e.message); }
+    } })));
+    if (lastMine && m === lastMine && CH.partnerRead >= m.seq) list.append(h("div", { class: "seen", text: "Seen" }));
+  }
+  if (scroll || nearBottom) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+}
+
+function fileView(f) {
+  if (f.kind === "image") {
+    const img = h("img", { class: "chat-img", alt: f.name, style: f.w && f.h ? "aspect-ratio:" + f.w + "/" + f.h : null });
+    chatFileUrl(f.id).then(u => { img.src = u; }).catch(() => { img.alt = "Couldn't load photo"; });
+    img.addEventListener("click", () => { const big = h("img", { class: "photo-big", alt: f.name }); chatFileUrl(f.id).then(u => { big.src = u; }); sheet(big, h("a", { class: "btn small", href: "#", text: "Save photo", onclick: e => { e.preventDefault(); download(f); } })); });
+    return img;
+  }
+  if (f.kind === "video") {
+    const v = h("video", { class: "chat-img", controls: true, playsinline: true, preload: "metadata" });
+    chatFileUrl(f.id).then(u => { v.src = u; }).catch(() => {});
+    return v;
+  }
+  return h("div", { class: "chat-file" }, h("span", { class: "big-emoji", text: "📎" }),
+    h("div", { class: "grow" }, h("b", { text: f.name }), h("span", { class: "small", text: fmtSize(f.size) })),
+    h("button", { class: "btn small", type: "button", text: "Download", onclick: () => download(f) }));
+}
+async function download(f) {
+  try { const u = await chatFileUrl(f.id); const a = h("a", { href: u, download: f.name }); document.body.append(a); a.click(); a.remove(); }
+  catch (e) { toast("⚠️", "Couldn't download that file."); }
+}
+
+async function loadChat(initial) {
+  if (!linked() || CH.loading) return;
+  CH.loading = true;
+  try {
+    let r = await api("GET", "/api/chat" + (initial || !CH.last ? "" : "?after=" + CH.last));
+    // Something older changed (a message was unsent): reload the recent messages.
+    if (!initial && CH.edit != null && r.edit !== CH.edit) { r = await api("GET", "/api/chat"); initial = true; CH.reload = true; }
+    CH.edit = r.edit;
+    CH.partnerRead = r.partnerRead;
+    if (initial || !CH.last) {
+      const pending = CH.msgs.filter(m => m.pending);
+      CH.msgs = [...r.messages, ...pending]; CH.hasOlder = r.hasOlder;
+    }
+    else {
+      const known = new Set(CH.msgs.filter(m => !m.pending).map(m => m.seq));
+      for (const m of r.messages) if (!known.has(m.seq)) CH.msgs.push(m);
+    }
+    CH.msgs = CH.msgs.filter(m => !m.pending || !r.messages.some(x => x.id === m.id)).sort((a, b) => (a.pending ? 1e15 : a.seq) - (b.pending ? 1e15 : b.seq));
+    const newLast = Math.max(r.last, CH.last);
+    const changed = initial || newLast !== CH.last || r.partnerRead !== CH.seenRead;
+    CH.last = newLast; CH.seenRead = r.partnerRead;
+    if (S.tab === "chat" && !document.hidden && r.myRead < CH.last) {
+      api("POST", "/api/chat/read", { seq: CH.last }).catch(() => {});
+      if (S.us && S.us.chat) { S.us.chat.unread = 0; S.us.chat.myRead = CH.last; }
+      updateBadge(); $("chatDot").hidden = true;
+    }
+    CH.loading = false;
+    if (changed) drawMessages(initial && !CH.reload);
+    CH.reload = false;
+  } catch (e) { CH.loading = false; }
+}
+async function loadOlder() {
+  const first = CH.msgs.find(m => !m.pending); if (!first) return;
+  const h0 = document.body.scrollHeight;
+  const r = await api("GET", "/api/chat?before=" + first.seq).catch(() => null); if (!r) return;
+  CH.msgs = [...r.messages, ...CH.msgs]; CH.hasOlder = r.hasOlder;
+  drawMessages(); window.scrollTo(0, window.scrollY + document.body.scrollHeight - h0);
+}
+function chatLoop() {
+  clearTimeout(CH.timer);
+  if (S.tab !== "chat" || !linked()) return;
+  loadChat(false).finally(() => { CH.timer = setTimeout(chatLoop, document.hidden ? 10000 : 2500); });
+}
+function openChat() {
+  if (!CH.built || !$("chatList")) buildChat();
+  if (!linked()) return;
+  if (!CH.msgs.length) { CH.loading = false; loadChat(true).then(() => { CH.timer = setTimeout(chatLoop, 2500); }); }
+  else { drawMessages(true); chatLoop(); }
+}
+
+async function postMessage(body, pendingView) {
+  const temp = { id: "tmp" + Math.random(), pending: true, from: S.me.id, at: Date.now(), text: body.text || "", file: pendingView || null };
+  CH.msgs.push(temp); drawMessages(true);
+  try {
+    const m = await api("POST", "/api/chat", body);
+    CH.msgs = CH.msgs.filter(x => x !== temp && x.seq !== m.seq); CH.msgs.push(m); CH.msgs.sort((a, b) => a.seq - b.seq);
+    CH.last = Math.max(CH.last, m.seq); drawMessages(true);
+    return true;
+  } catch (e) {
+    CH.msgs = CH.msgs.filter(x => x !== temp); drawMessages(); toast("⚠️", e.message || "Couldn't send. Try again."); return false;
+  }
+}
+async function sendText() {
+  const ta = $("chatText"), text = ta.value.trim();
+  if (!text) return;
+  ta.value = ""; ta.style.height = "auto"; delete draft.chat; ls.set("lb-drafts", draft);
+  if (!(await postMessage({ text }))) { ta.value = text; saveDraft("chat", text); }
+}
+async function sendFile(f) {
+  const ta = $("chatText"), text = ta.value.trim();
+  try {
+    let file;
+    if (/^image\/(jpeg|png|webp|heic|heif)$/i.test(f.type) || (!f.type && /\.(heic|heif)$/i.test(f.name))) {
+      const { data, w, h: hh } = await compressPhoto(f);
+      file = { name: f.name.replace(/\.\w+$/, "") + ".jpg", type: "image/jpeg", data, w, h: hh };
+    } else {
+      if (f.size > MAX_FILE) return toast("📎", "That's " + fmtSize(f.size) + ". Files and videos can be up to 3 MB.");
+      file = { name: f.name || "file", type: f.type || "application/octet-stream", data: await readAsDataURL(f) };
+      if (f.type.startsWith("image/")) { try { const b = await createImageBitmap(f); file.w = b.width; file.h = b.height; } catch (e) {} }
+    }
+    if (text) { ta.value = ""; delete draft.chat; ls.set("lb-drafts", draft); }
+    await postMessage({ text, file }, { kind: "file", name: (file.type.startsWith("video/") ? "🎥 " : file.type.startsWith("image/") ? "📷 " : "") + file.name, size: f.size, id: "pending" });
+  } catch (e) { toast("⚠️", e.message || "Couldn't send that file."); }
+}
+
 /* ---------------- Us tab ---------------- */
 const draft = ls.get("lb-drafts", {});
 const saveDraft = (k, v) => { draft[k] = v; ls.set("lb-drafts", draft); };
 let usMsg = "";
+// Heart Jump and the quiz moved here from the old Play tab.
+const PLAY_NODES = [document.querySelector(".gamecard"), document.getElementById("quizCard")];
+function appendPlay(tab) { tab.append(...PLAY_NODES); renderQuiz(); }
 
 function nextOccurrence(date, yearly, from) {
   if (!yearly) return date;
@@ -737,6 +924,7 @@ function renderUs() {
       h("h2", { text: "Just the two of you" }),
       h("p", { class: "sub", text: "Link with your partner to unlock a daily question for two, nudges, a shared streak, mood check-ins, your days together, special dates and a date-idea list." }),
       h("button", { class: "btn accent", text: S.setup ? "See what's needed" : "Link with your partner", onclick: () => setTab("me") })));
+    appendPlay(tab);
     return;
   }
   const U = S.us;
@@ -829,7 +1017,7 @@ function renderUs() {
       h("div", { class: "stat" }, h("span", { class: "eyebrow", text: "You" }), h("b", { style: "font-size:20px", text: ml ? LANGS[ml.primary].name : "Take the quiz" })),
       h("div", { class: "stat" }, h("span", { class: "eyebrow", text: P }), h("b", { style: "font-size:20px", text: pl ? LANGS[pl.primary].name : "Not yet" }))),
     pl ? h("p", { text: "💡 " + dailyPick(LANGS[pl.primary].tips, 3) }) : h("p", { class: "sub", text: "When " + p + " takes the quiz, you'll get a daily tip for loving them their way." }),
-    !ml ? h("button", { class: "btn accent", style: "align-self:flex-start", text: "Take the 1-minute quiz", onclick: () => { setTab("play"); startQuiz(); } }) : null));
+    !ml ? h("button", { class: "btn accent", style: "align-self:flex-start", text: "Take the 1-minute quiz", onclick: () => { startQuiz(); $("quizCard").scrollIntoView({ behavior: "smooth", block: "start" }); } }) : null));
 
   // Special dates
   const titleIn = h("input", { class: "field", maxlength: 60, placeholder: "e.g. Anniversary, Ada's birthday", "aria-label": "What's the date?" });
@@ -874,6 +1062,7 @@ function renderUs() {
     !open.length ? h("div", { class: "chips" }, suggestions.slice(0, 6).map(s => h("button", { class: "chip", onclick: () => addIdea(s) }, "+ " + s))) : null,
     done.length ? h("details", {}, h("summary", { class: "linkbtn", text: "Done together (" + done.length + ")" }), h("ul", { class: "list" }, done.map(ideaRow))) : null));
 
+  appendPlay(tab);
   if (usMsg) { tab.append(h("p", { class: "msg err", text: usMsg })); usMsg = ""; }
 }
 async function setMood(mood, need) {
@@ -1197,10 +1386,11 @@ function renderAll() {
   if (tabEl && editing(tabEl)) { pendingRender = true; }
   else if (S.tab === "us") renderUs();
   else if (S.tab === "me") renderMe();
-  else if (S.tab === "play") renderQuiz();
+  else if (S.tab === "chat") { if (!CH.built || !$("chatList") || !linked()) buildChat(); }
   else if (S.tab === "explore") renderExplore();
   if (S.tab === "today" && window.render) window.render();
   $("meDot").hidden = !(S.me && !linked() && !S.setup);
+  $("chatDot").hidden = !(linked() && S.us && S.us.chat && S.us.chat.unread > 0 && S.tab !== "chat");
   updateBadge();
   $("usDot").hidden = !(linked() && S.us && S.us.question.partnerAnswered && !S.us.question.mine);
 }
@@ -1233,6 +1423,7 @@ function waitingCount() {
   if (nd && nd.at > ls.get("lb-nudge-seen-badge", 0) && S.tab !== "us") n++;
   const L = S.us.ldr;
   if (L) n += L.letters.toMe.filter(l => !l.openedAt && !l.locked).length;
+  if (S.us.chat && S.tab !== "chat") n += S.us.chat.unread;
   return n;
 }
 async function updateBadge() {

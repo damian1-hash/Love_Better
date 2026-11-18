@@ -29,6 +29,8 @@ export class MemoryKV {
   async hdel(k, ...fs) { const e = this.#live(k); if (e) for (const f of fs) e.v.delete(f); }
   async hgetall(k) { return Object.fromEntries(this.#live(k)?.v ?? []); }
   async hlen(k) { return this.#live(k)?.v.size ?? 0; }
+  async incr(k) { const n = (Number(this.#live(k)?.v) || 0) + 1; const e = this.#live(k); this.m.set(k, { v: String(n), exp: e ? e.exp : 0 }); return n; }
+  async mget(...ks) { return ks.map(k => { const e = this.#live(k); return e && typeof e.v === "string" ? e.v : null; }); }
 }
 
 export class RedisKV {
@@ -69,6 +71,8 @@ export class RedisKV {
     return out;
   }
   async hlen(k) { return this.cmd("HLEN", k); }
+  async incr(k) { return Number(await this.cmd("INCR", k)); }
+  async mget(...ks) { return ks.length ? this.cmd("MGET", ...ks) : []; }
 }
 
 export function redisConfigFromEnv(env = process.env) {

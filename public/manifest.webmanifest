@@ -27,10 +27,10 @@
   ],
   "shortcuts": [
     {
-      "name": "Question for two",
-      "short_name": "Question",
-      "description": "Answer today's question together",
-      "url": "/#us",
+      "name": "Chat",
+      "short_name": "Chat",
+      "description": "Message your partner",
+      "url": "/#chat",
       "icons": [
         {
           "src": "icon-192.png",
@@ -40,9 +40,9 @@
       ]
     },
     {
-      "name": "Send a nudge",
-      "short_name": "Nudge",
-      "description": "Let your partner know you're thinking of them",
+      "name": "Question for two",
+      "short_name": "Question",
+      "description": "Answer today's question together",
       "url": "/#us",
       "icons": [
         {
