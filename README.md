@@ -2,7 +2,9 @@
 
 Love Better Daily is a page-a-day reminder for loving people better. It includes **Heart Jump**, a game for two phones, and **code-based partner linking**.
 
-## What's here
+![Love Better on a phone](docs/love-better-preview.png)
+
+## What’s here
 
 | Path | What it is |
 | --- | --- |
