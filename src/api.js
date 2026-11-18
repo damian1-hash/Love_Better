@@ -156,6 +156,26 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const couple = await coupleOf(uid), { date, mood, need } = await readJson(req);
         return send(res, 200, await couples.setMood(uid, couple, date, mood, need));
       }
+      // ----- long distance -----
+      case "PUT /api/us/where": {
+        const couple = await coupleOf(uid), { lat, lon } = await readJson(req);
+        const name = await finder.cityAt(lat, lon);
+        return send(res, 200, await couples.setPlace(uid, couple, { lat, lon, ...name }));
+      }
+      case "DELETE /api/us/where": return send(res, 200, await couples.clearPlace(uid, await coupleOf(uid)));
+      case "PUT /api/us/tz": {
+        const couple = await coupleOf(uid), { tz } = await readJson(req);
+        return send(res, 200, await couples.setTimeZone(uid, couple, tz));
+      }
+      case "PUT /api/us/reunion": {
+        const couple = await coupleOf(uid), body = await readJson(req);
+        return send(res, 200, await couples.setReunion(uid, couple, body));
+      }
+      case "PUT /api/us/visits": {
+        const couple = await coupleOf(uid), { visits } = await readJson(req);
+        return send(res, 200, await couples.setVisits(couple, visits));
+      }
+
       case "PUT /api/us/since": {
         const couple = await coupleOf(uid), { since } = await readJson(req);
         return send(res, 200, await couples.setSince(couple, since));

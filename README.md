@@ -12,6 +12,7 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 
 **Us** (after linking with your partner):
 - **Days together:** counts from the day you linked, or from a date you set, with the next milestone and anniversary.
+- **The distance between us** (for long-distance couples): how many km and miles apart you are and which cities you're in, both your local times (morning or night there, hours ahead or behind), and a countdown to your next visit with a visit count. Each phone shares only its city (rounded to about 10 km), and only after choosing to.
 - **Nudges:** one tap sends "Thinking of you", "Miss you", "Proud of you" or a hug. It pops up on your partner's screen and, with notifications on, on their phone.
 - **Today:** your partner's mood and what would help them, plus your **shared streak**: the days you both practised the reminder.
 - **Question for two:** a new question every day. Answers stay hidden until you've both answered. Earlier answers are kept.
@@ -105,6 +106,10 @@ Every request (except `/api/push/key` and the cron) sends `Authorization: Bearer
 | `PUT /api/us/practice` | `{ dates: [...] }` | Days you practised |
 | `PUT /api/us/mood` | `{ date, mood, need }` | |
 | `PUT /api/us/since` | `{ since }` | Together-since date |
+| `PUT /api/us/where`, `DELETE /api/us/where` | `{ lat, lon }` | Share or stop sharing your city (stored rounded to ~10 km) |
+| `PUT /api/us/tz` | `{ tz }` | Your time zone |
+| `PUT /api/us/reunion` | `{ date, place, today }` | Next visit (`date: null` removes it) |
+| `PUT /api/us/visits` | `{ visits }` | Correct the visit count |
 | `POST /api/us/dates`, `DELETE /api/us/dates?id=` | `{ title, date, yearly }` | |
 | `POST /api/us/ideas`, `PATCH /api/us/ideas`, `DELETE /api/us/ideas?id=` | `{ text }`, `{ id, done }` | |
 | `PUT /api/us/lang` | `{ scores }` | Quiz result |

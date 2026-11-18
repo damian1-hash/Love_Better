@@ -222,6 +222,8 @@ async function loadUs() {
   try { S.us = await api("GET", "/api/us?date=" + today()); S.usErr = null; }
   catch (e) { S.usErr = e.message; if (e.code === "not_linked") return loadMe(); }
   checkNudge();
+  syncTimeZone();
+  refreshCityQuietly();
   renderAll();
 }
 
@@ -364,6 +366,122 @@ function renderMe() {
   tab.append(renderInstallCard());
 }
 
+
+/* ---------------- long distance ---------------- */
+const MY_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return null; } })();
+function tzOffsetMin(tz, at) {
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(at).map(p => [p.type, p.value]));
+    return Math.round((Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute) - at.getTime()) / 60000);
+  } catch (e) { return null; }
+}
+const timeIn = (tz, at) => at.toLocaleTimeString([], { timeZone: tz || undefined, hour: "numeric", minute: "2-digit" });
+function partOfDay(tz, at) {
+  const hr = Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hourCycle: "h23" }).format(at)) % 24;
+  return hr < 6 ? ["🌙", "probably asleep"] : hr < 12 ? ["🌅", "morning"] : hr < 17 ? ["☀️", "afternoon"] : hr < 22 ? ["🌆", "evening"] : ["🌙", "night"];
+}
+function gapText(mins) {
+  if (!mins) return "same time as you";
+  const h = Math.abs(mins) / 60, n = Number.isInteger(h) ? String(h) : h.toFixed(1).replace(/\.0$/, "");
+  return n + (h === 1 ? " hour " : " hours ") + (mins > 0 ? "ahead" : "behind");
+}
+let clockTimer = null;
+function tickClocks() {
+  const now = new Date();
+  for (const el of document.querySelectorAll("[data-clock]")) el.textContent = timeIn(el.dataset.clock || null, now);
+}
+async function shareCity(silent) {
+  if (!navigator.geolocation) { if (!silent) toast("⚠️", "This browser can't share location."); return; }
+  if (!silent) { S.locatingCity = true; renderUs(); }
+  navigator.geolocation.getCurrentPosition(async pos => {
+    S.locatingCity = false;
+    try {
+      await api("PUT", "/api/us/where", { lat: Math.round(pos.coords.latitude * 10) / 10, lon: Math.round(pos.coords.longitude * 10) / 10 });
+      ls.set("lb-share-city", true); ls.set("lb-city-at", Date.now());
+      await loadUs();
+    } catch (e) { if (!silent) toast("⚠️", e.message); renderUs(); }
+  }, err => {
+    S.locatingCity = false;
+    if (!silent) toast("📍", err.code === 1 ? "Location is blocked. Allow it in your settings to share your city." : "Couldn't find your location. Try again.");
+    renderUs();
+  }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 30 * 60000 });
+}
+// Keep your city fresh when you travel: at most every 6 hours, only if you
+// chose to share it and the browser already allows location.
+async function refreshCityQuietly() {
+  if (!ls.get("lb-share-city", false) || Date.now() - ls.get("lb-city-at", 0) < 6 * 3600 * 1000) return;
+  try { const st = await navigator.permissions.query({ name: "geolocation" }); if (st.state === "granted") shareCity(true); } catch (e) {}
+}
+function syncTimeZone() {
+  if (MY_TZ && S.us && S.us.me.tz !== MY_TZ) api("PUT", "/api/us/tz", { tz: MY_TZ }).then(() => { S.us.me.tz = MY_TZ; }).catch(() => {});
+}
+
+function renderLdrCard(U, t, P, p) {
+  const card = h("section", { class: "card", "aria-labelledby": "ldrH" }, h("h2", { id: "ldrH", text: "The distance between us" }));
+  // Distance
+  if (U.apart) {
+    const km = U.apart.km;
+    card.append(km <= 15
+      ? h("p", { class: "qtext", text: "You're in the same city right now 💞" })
+      : h("div", { class: "ldr-dist" }, h("b", { text: km.toLocaleString() }), h("span", { text: " km apart" }), h("small", { text: " · " + Math.round(km * 0.621371).toLocaleString() + " miles" })));
+    card.append(h("div", { class: "ldr-route" },
+      h("span", { text: "📍 " + ([U.me.place.city, U.me.place.country].filter(Boolean).join(", ") || "You") }),
+      h("i", { "aria-hidden": "true" }),
+      h("span", { text: "📍 " + ([U.partner.place.city, U.partner.place.country].filter(Boolean).join(", ") || P) })));
+  } else if (!U.me.place) {
+    card.append(h("p", { class: "sub", text: "See how many kilometres are between you. Only your city is shared, never your exact location." }),
+      h("button", { class: "btn accent", style: "align-self:flex-start", disabled: !!S.locatingCity, text: S.locatingCity ? "Finding your city…" : "📍 Share my city", onclick: () => shareCity(false) }));
+    if (U.partner.place && U.partner.place.city) card.append(h("p", { class: "small", text: P + " is in " + U.partner.place.city + "." }));
+  } else {
+    card.append(h("p", { class: "sub", text: (U.me.place.city ? "You're in " + U.me.place.city + ". " : "") + "Waiting for " + p + " to share their city." }));
+  }
+  if (U.me.place) card.append(h("button", { class: "linkbtn", style: "align-self:flex-start", text: "Stop sharing my city", onclick: async () => {
+    await api("DELETE", "/api/us/where").catch(() => {}); ls.set("lb-share-city", false); loadUs();
+  } }));
+
+  // Clocks
+  const tz = U.partner.tz;
+  if (tz) {
+    const now = new Date(), a = tzOffsetMin(tz, now), b = tzOffsetMin(MY_TZ, now), gap = a != null && b != null ? a - b : 0, [emoji, part] = partOfDay(tz, now);
+    card.append(h("div", { class: "stats" },
+      h("div", { class: "stat" }, h("span", { class: "eyebrow", text: "Your time" }), h("b", { "data-clock": MY_TZ || "", text: timeIn(MY_TZ, now) })),
+      h("div", { class: "stat" }, h("span", { class: "eyebrow", text: P + "'s time" }), h("b", { "data-clock": tz, text: timeIn(tz, now) }),
+        h("span", { class: "small", text: emoji + " " + part + " · " + gapText(gap) }))));
+  }
+
+  // Next visit
+  const R = U.reunion, form = () => {
+    const d = h("input", { class: "field", type: "date", min: t, value: "", "aria-label": "Date you'll see each other" });
+    const where = h("input", { class: "field", maxlength: 60, placeholder: "Where? (optional)", "aria-label": "Where" });
+    return h("form", { style: "display:flex;flex-direction:column;gap:10px", onsubmit: async e => {
+      e.preventDefault();
+      if (!d.value) return toast("📅", "Pick the date you'll see each other.");
+      try { await api("PUT", "/api/us/reunion", { date: d.value, place: where.value, today: t }); S.editReunion = false; loadUs(); } catch (err) { toast("⚠️", err.message); }
+    } }, d, where, h("button", { class: "btn accent", style: "align-self:flex-start", type: "submit", text: "Start the countdown" }));
+  };
+  card.append(h("span", { class: "eyebrow", style: "margin-top:6px", text: "Until we meet again" }));
+  const visitNo = U.visits + 1;
+  if (R && !S.editReunion) {
+    const n = dayNum(R.date) - dayNum(t);
+    if (n >= 0) {
+      card.append(h("div", { class: "ldr-count" },
+        n === 0 ? h("b", { text: "Today's the day! 🎉" }) : h("b", {}, String(n), h("small", { text: n === 1 ? " day to go" : " days to go" })),
+        h("span", { class: "sub", text: fmtDate(R.date, { weekday: "long", day: "numeric", month: "long" }) + (R.place ? " · " + R.place : "") + " · visit #" + visitNo })));
+      card.append(h("div", { class: "row" },
+        h("button", { class: "linkbtn", text: "Change", onclick: () => { S.editReunion = true; renderUs(); } }),
+        h("button", { class: "linkbtn", text: "Remove", onclick: async () => { if (confirm("Remove the countdown?")) { await api("PUT", "/api/us/reunion", { date: null }).catch(() => {}); loadUs(); } } })));
+    } else {
+      card.append(h("p", { text: "Hope your time together" + (R.place ? " in " + R.place : "") + " was wonderful 💞 When's the next visit?" }), form());
+    }
+  } else {
+    if (!R) card.append(h("p", { class: "sub", text: "Set the date you'll next be together, and you'll both see the countdown." }));
+    card.append(form());
+    if (S.editReunion) card.append(h("button", { class: "linkbtn", style: "align-self:flex-start", text: "Cancel", onclick: () => { S.editReunion = false; renderUs(); } }));
+  }
+  if (U.visits) card.append(h("p", { class: "small", text: "You've had " + plural(U.visits, "visit") + " together since you started counting." }));
+  return card;
+}
+
 /* ---------------- Us tab ---------------- */
 const draft = ls.get("lb-drafts", {});
 const saveDraft = (k, v) => { draft[k] = v; ls.set("lb-drafts", draft); };
@@ -411,6 +529,10 @@ function renderUs() {
       ? h("form", { class: "row", onsubmit: async e => { e.preventDefault(); try { await api("PUT", "/api/us/since", { since: sinceIn.value }); S.editSince = false; loadUs(); } catch (err) { usMsg = err.message; renderUs(); } } },
           sinceIn, h("button", { class: "btn accent small", type: "submit", text: "Save" }))
       : h("button", { class: "linkbtn", style: "align-self:flex-start", text: U.together.sinceSet ? "Change the date" : "Been together longer? Set the date", onclick: () => { S.editSince = true; renderUs(); } })));
+
+  // Long distance
+  tab.append(renderLdrCard(U, t, P, p));
+  clearInterval(clockTimer); clockTimer = setInterval(tickClocks, 20000);
 
   // Nudges
   tab.append(h("section", { class: "card", "aria-labelledby": "nudgeH" },

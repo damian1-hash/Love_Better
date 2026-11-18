@@ -279,6 +279,18 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 .place .actions a, .place .actions button { text-decoration: none; display: inline-flex; align-items: center; }
 .osm { font-size: 12px; color: var(--muted); text-align: center; }
 .osm a { color: inherit; }
+
+.ldr-dist { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 6px; }
+.ldr-dist b { font-family: var(--display); font-weight: 400; font-size: 52px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ldr-dist span { font-weight: 600; font-size: 18px; }
+.ldr-dist small { color: var(--muted); font-size: 14px; }
+.ldr-route { display: grid; grid-template-columns: 1fr 48px 1fr; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.ldr-route span:last-child { text-align: right; }
+.ldr-route i { height: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 6px, transparent 6px 11px); position: relative; }
+.ldr-route i::after { content: "♥"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -55%); color: var(--accent); font-size: 14px; font-style: normal; background: var(--leaf); padding: 0 3px; }
+.ldr-count { display: flex; flex-direction: column; gap: 4px; }
+.ldr-count b { font-family: var(--display); font-weight: 400; font-size: 44px; line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ldr-count b small { font-family: var(--body); font-size: 16px; font-weight: 600; color: var(--muted); }
 </style>
 </head>
 <body>

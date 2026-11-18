@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { PairingError } from "./pairing.js";
+import { distanceM } from "../public/places-core.js";
 
 const J = v => (v == null ? null : JSON.parse(v));
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -57,7 +58,7 @@ export class CoupleService {
   async summary(uid, couple, date) {
     this.checkDate(date);
     const C = couple.id, partner = couple.members.find(m => m !== uid);
-    const [me, them, moods, answers, nudges, myDone, theirDone, since, dates, ideas, langs] = await Promise.all([
+    const [me, them, moods, answers, nudges, myDone, theirDone, since, dates, ideas, langs, places, zones, reunion, visits] = await Promise.all([
       this.getProfile(uid), this.getProfile(partner),
       this.kv.hgetall(this.#k("c", C, "mood")),
       this.kv.hgetall(this.#k("c", C, "q", date)),
@@ -67,15 +68,23 @@ export class CoupleService {
       this.kv.hgetall(this.#k("c", C, "dates")),
       this.kv.hgetall(this.#k("c", C, "ideas")),
       this.kv.hgetall(this.#k("c", C, "lang")),
+      this.kv.hgetall(this.#k("c", C, "where")),
+      this.kv.hgetall(this.#k("c", C, "tz")),
+      this.kv.get(this.#k("c", C, "reunion")),
+      this.kv.get(this.#k("c", C, "visits")),
     ]);
+    const myPlace = J(places[uid]), theirPlace = J(places[partner]);
     const mood = id => { const m = J(moods[id]); return m && m.date === date ? m : null; };
     const mine = J(answers[uid]), theirs = J(answers[partner]);
     const linkedDate = new Date(couple.createdAt).toISOString().slice(0, 10);
     const start = since || linkedDate;
     return {
       date,
-      me: { name: me.name, mood: mood(uid), practised: myDone.includes(date), lang: J(langs[uid]) },
-      partner: { name: them.name, mood: mood(partner), practised: theirDone.includes(date), lang: J(langs[partner]) },
+      me: { name: me.name, mood: mood(uid), practised: myDone.includes(date), lang: J(langs[uid]), place: myPlace && { city: myPlace.city, country: myPlace.country }, tz: zones[uid] || null },
+      partner: { name: them.name, mood: mood(partner), practised: theirDone.includes(date), lang: J(langs[partner]), place: theirPlace && { city: theirPlace.city, country: theirPlace.country }, tz: zones[partner] || null },
+      apart: myPlace && theirPlace ? { km: Math.round(distanceM(myPlace.lat, myPlace.lon, theirPlace.lat, theirPlace.lon) / 1000) } : null,
+      reunion: J(reunion),
+      visits: Number(visits) || 0,
       question: { mine, theirs: mine && theirs ? theirs : null, partnerAnswered: !!theirs },
       nudge: J(nudges[uid]),
       streak: coupleStreak(myDone, theirDone, date),
@@ -183,10 +192,53 @@ export class CoupleService {
     return result;
   }
 
+  // ----- long distance -----
+  // Where each of you is, to city level only (rounded to ~10 km). The city
+  // name comes from the caller (reverse geocoding lives in PlacesService).
+  async setPlace(uid, couple, { lat, lon, city, country }) {
+    lat = Number(lat); lon = Number(lon);
+    if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) throw new PairingError("bad_location", "Invalid location.");
+    const place = { lat: Math.round(lat * 10) / 10, lon: Math.round(lon * 10) / 10, city: city ? String(city).slice(0, 80) : null, country: country ? String(country).slice(0, 60) : null, at: this.now() };
+    await this.kv.hset(this.#k("c", couple.id, "where"), uid, JSON.stringify(place));
+    return { city: place.city, country: place.country };
+  }
+  async clearPlace(uid, couple) { await this.kv.hdel(this.#k("c", couple.id, "where"), uid); return { cleared: true }; }
+  async setTimeZone(uid, couple, tz) {
+    tz = String(tz || "");
+    try { new Intl.DateTimeFormat("en", { timeZone: tz }); } catch { throw new PairingError("bad_tz", "Unknown time zone."); }
+    if (!tz || tz.length > 64) throw new PairingError("bad_tz", "Unknown time zone.");
+    await this.kv.hset(this.#k("c", couple.id, "tz"), uid, tz);
+    return { tz };
+  }
+  // Next time you'll be together. Setting a new date after the last one has
+  // passed counts that visit.
+  async setReunion(uid, couple, { date, place, today }) {
+    const k = this.#k("c", couple.id, "reunion");
+    if (date === null || date === "") { await this.kv.del(k); return { reunion: null }; }
+    if (!DATE_RE.test(String(date)) || Number.isNaN(dayNumber(date))) throw new PairingError("bad_date", "Pick a date.");
+    this.checkDate(today);
+    if (dayNumber(date) < dayNumber(today)) throw new PairingError("bad_date", "Pick today or a date in the future.");
+    const prev = J(await this.kv.get(k));
+    let visits = Number(await this.kv.get(this.#k("c", couple.id, "visits"))) || 0;
+    if (prev && dayNumber(prev.date) < dayNumber(today)) {
+      visits++;
+      await this.kv.set(this.#k("c", couple.id, "visits"), visits);
+    }
+    const reunion = { date, place: place ? text(place, 60, "place") : null, by: uid, at: this.now() };
+    await this.kv.set(k, JSON.stringify(reunion));
+    return { reunion, visits };
+  }
+  async setVisits(couple, n) {
+    n = Number(n);
+    if (!Number.isInteger(n) || n < 0 || n > 10000) throw new PairingError("bad_visits", "Invalid number.");
+    await this.kv.set(this.#k("c", couple.id, "visits"), n);
+    return { visits: n };
+  }
+
   // Remove everything shared when a couple unlinks.
   async deleteAll(couple) {
     const C = couple.id;
-    await this.kv.del(...["mood", "nudge", "since", "dates", "ideas", "lang"].map(x => this.#k("c", C, x)),
+    await this.kv.del(...["mood", "nudge", "since", "dates", "ideas", "lang", "where", "tz", "reunion", "visits"].map(x => this.#k("c", C, x)),
       ...couple.members.map(m => this.#k("c", C, "done", m)));
   }
 }

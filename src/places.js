@@ -151,6 +151,25 @@ export class PlacesService {
     return { cat, radius, places, source: "geoapify", attribution: "Powered by Geoapify · © OpenStreetMap contributors" };
   }
 
+  // City and country for a point, via Nominatim. Rounded to ~10 km first, so
+  // nothing more precise ever leaves the server, and cached for a month.
+  async cityAt(lat, lon) {
+    lat = Math.round(Number(lat) * 10) / 10; lon = Math.round(Number(lon) * 10) / 10;
+    const ck = this.store.key("city", lat, lon);
+    try { const c = await this.kv.get(ck); if (c) return JSON.parse(c); } catch {}
+    let out = { city: null, country: null };
+    try {
+      const res = await this.fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&lat=" + lat + "&lon=" + lon,
+        { headers: { "User-Agent": UA, Accept: "application/json", "Accept-Language": "en" }, signal: AbortSignal.timeout(6000) });
+      if (res.ok) {
+        const a = (await res.json()).address || {};
+        out = { city: a.city || a.town || a.village || a.municipality || a.county || a.state || null, country: a.country || null };
+        try { await this.kv.set(ck, JSON.stringify(out), { ex: 30 * 24 * 3600 }); } catch {}
+      }
+    } catch (e) { console.error("reverse geocode failed", e.message); }
+    return out;
+  }
+
   async geocode(uid, q) {
     q = String(q || "").trim().replace(/\s+/g, " ");
     if (q.length < 2 || q.length > 100) throw new PairingError("bad_query", "Type a town, area or address.");
