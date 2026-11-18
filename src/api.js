@@ -71,15 +71,18 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
   async function route(req, res, url, path) {
     // Vercel Cron: daily reminder to everyone with notifications on.
     if (path === "/api/cron/daily") {
-      if (!env.CRON_SECRET || req.headers.authorization !== "Bearer " + env.CRON_SECRET) {
+      // With CRON_SECRET set, only Vercel Cron may call this. Without it,
+      // anyone may, but the reminder still goes out at most once a day.
+      if (env.CRON_SECRET && req.headers.authorization !== "Bearer " + env.CRON_SECRET) {
         throw new PairingError("forbidden", "Not allowed.", 403);
       }
-      return send(res, 200, await pushes.sendToEveryone({
+      return send(res, 200, await pushes.sendDaily({
         title: "Love Better", body: "Today's reminder and your question for two are ready. 💛", url: "/", tag: "daily",
       }));
     }
     if (req.method + " " + path === "GET /api/push/key") {
-      return send(res, 200, { enabled: pushes.enabled, publicKey: pushes.enabled ? pushes.vapid.publicKey : null });
+      const vapid = pushes.getVapid ? await pushes.getVapid() : pushes.vapid;
+      return send(res, 200, { enabled: !!vapid, publicKey: vapid ? vapid.publicKey : null });
     }
 
     const uid = userIdFromRequest(req);

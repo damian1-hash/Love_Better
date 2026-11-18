@@ -66,3 +66,25 @@ test("subscriptions that the push service says are gone get removed", async () =
   assert.equal(Object.keys(await store.kv.hgetall(store.key("push", "u1"))).length, 0);
   await assert.rejects(svc.subscribe("u1", { endpoint: "http://insecure", keys: {} }));
 });
+
+test("with no keys configured, the server makes a key pair once and reuses it", async () => {
+  const store = new MemoryStore();
+  const a = new PushService(store, { vapid: null }), b = new PushService(store, { vapid: null });
+  const [ka, kb] = await Promise.all([a.getVapid(), b.getVapid()]);
+  assert.equal(ka.publicKey, kb.publicKey);
+  assert.equal(Buffer.from(ka.publicKey, "base64url").length, 65);
+  let auth;
+  const svc = new PushService(store, { vapid: null, fetchImpl: async (url, init) => { auth = init.headers.Authorization; return { status: 201 }; } });
+  await svc.subscribe("u1", browser().sub);
+  assert.deepEqual(await svc.sendTo("u1", { title: "hi" }), { sent: 1 });
+  assert.ok(auth.endsWith("k=" + ka.publicKey));
+  assert.match(JSON.parse(Buffer.from(auth.split(".")[1], "base64url")).sub, /^https:\/\/love-better\.vercel\.app$/);
+});
+
+test("the daily reminder goes out at most once a day, however often it's triggered", async () => {
+  const store = new MemoryStore();
+  const svc = new PushService(store, { vapid: generateVapidKeys(), fetchImpl: async () => ({ status: 201 }) });
+  await svc.subscribe("u1", browser().sub);
+  assert.deepEqual(await svc.sendDaily({ title: "x" }), { people: 1, sent: 1 });
+  assert.deepEqual(await svc.sendDaily({ title: "x" }), { skipped: "already sent today" });
+});

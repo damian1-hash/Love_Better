@@ -61,12 +61,12 @@ Needs Node 18+. There are no dependencies to install. Locally, data is kept in m
 ## Deploy on Vercel
 
 1. **Database (required).** In the Vercel project, open **Storage** (or **Marketplace**), add **Upstash for Redis**, and connect it to this project. This sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
-2. **Notifications (optional).** Run `npm run vapid` on your computer and add the two printed values as environment variables: `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`. Optionally also set `VAPID_SUBJECT` to `mailto:you@example.com` or your site's URL.
-3. **Morning reminder (optional, needs step 2).** Add a `CRON_SECRET` environment variable set to any long random string. Vercel then calls `/api/cron/daily` every day at 07:00 UTC. To change the time, edit `crons` in `vercel.json`. On the Hobby plan, Vercel runs it once a day, sometime within that hour.
+2. **Notifications:** no setup needed. The server creates its notification keys the first time they're needed and stores them in the database. If you'd rather manage the keys yourself, run `npm run vapid` and set `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` (mark the private key Sensitive).
+3. **Morning reminder:** works out of the box. Vercel calls `/api/cron/daily` every day at 07:00 UTC, and the reminder can't go out more than once a day, however often that address is called. Optionally, set `CRON_SECRET` (Sensitive) so only Vercel can trigger it. To change the time, edit `crons` in `vercel.json`. On the Hobby plan, Vercel runs it once a day, sometime within that hour.
 4. **Fast place search (recommended).** Create a free account at [geoapify.com](https://www.geoapify.com/), create a project, copy its API key, and add it as `GEOAPIFY_API_KEY`. The free plan covers 3,000 requests a day, and results are cached per area for a day. The key stays on the server.
 5. **Redeploy** so the variables take effect.
 
-Without a database, the page still works and the Me tab explains what's missing. Without VAPID keys, everything works except notifications.
+Without a database, the page still works and the Me tab explains what's missing.
 
 **Notifications on iPhone:** add the app to the Home Screen first (Safari → Share → Add to Home Screen), then turn notifications on from the installed app. This needs iOS 16.4 or newer.
 

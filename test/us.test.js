@@ -12,7 +12,7 @@ const day = (n = 0) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 1
 function fakePush() {
   const sent = [];
   return { sent, enabled: true, vapid: { publicKey: "test" }, sendTo: async (uid, msg) => { sent.push({ uid, msg }); return { sent: 1 }; },
-    subscribe: async () => {}, unsubscribe: async () => {}, sendToEveryone: async msg => { sent.push({ all: true, msg }); return { people: 2, sent: 2 }; } };
+    subscribe: async () => {}, unsubscribe: async () => {}, sendDaily: async msg => { sent.push({ all: true, msg }); return { people: 2, sent: 2 }; } };
 }
 
 async function linkedPair(call) {
@@ -145,8 +145,9 @@ test("daily cron only runs with the right secret", async () => {
     assert.equal(ok.status, 200);
     assert.equal(push.sent.at(-1).all, true);
   });
+  // Without CRON_SECRET anyone may call it; PushService.sendDaily keeps it to once a day.
   await withServer(createApp({ store: new MemoryStore(), push, env: {} }), async ({ base }) => {
-    assert.equal((await fetch(base + "/api/cron/daily", { headers: { Authorization: "Bearer " } })).status, 403);
+    assert.equal((await fetch(base + "/api/cron/daily")).status, 200);
   });
 });
 

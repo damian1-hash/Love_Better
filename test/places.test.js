@@ -126,3 +126,18 @@ test("places API needs sign-in, works, and never sends the API key to the phone"
     for (const f of ["/", "/app.js", "/places-core.js"]) assert.ok(!(await (await fetch(base + f)).text()).includes(KEY));
   });
 });
+
+test("big results are cached compactly, and a failed cache write never breaks a search", async () => {
+  const many = { features: Array.from({ length: 100 }, (_, i) => ({ properties: { place_id: "p" + i, name: "Place " + i, lat: 59.914 + i / 10000, lon: 10.752,
+    categories: ["catering.restaurant"], datasource: { raw: Object.fromEntries(Array.from({ length: 80 }, (_, j) => ["tag" + j, "x".repeat(60)])) } } })) };
+  const store = new MemoryStore(); let written = 0;
+  const realSet = store.kv.set.bind(store.kv);
+  store.kv.set = async (k, v, o) => { if (k.includes("gplaces")) { written = v.length; if (v.length > 900_000) throw new Error("Redis error: request too large"); } return realSet(k, v, o); };
+  const svc = new PlacesService(store, { fetchImpl: async () => ({ ok: true, json: async () => many }), geoapifyKey: KEY });
+  const r = await svc.nearby("u", { ...HERE, radius: 2000, cat: "dinner" });
+  assert.equal(r.places.length, 60);
+  assert.ok(written < 60_000, "cached " + written + " bytes");
+  store.kv.set = async () => { throw new Error("Redis down"); };
+  const r2 = await new PlacesService(store, { fetchImpl: async () => ({ ok: true, json: async () => many }), geoapifyKey: KEY }).nearby("u", { ...HERE, radius: 5000, cat: "cafe" }).catch(e => e);
+  assert.equal(r2.places.length, 60, String(r2.message));
+});

@@ -1,7 +1,10 @@
 // Web Push (RFC 8291 message encryption + RFC 8292 VAPID), using only
 // node:crypto. Works with the push services browsers use (Google, Mozilla,
-// Apple). Needs VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (make them with
-// `npm run vapid`); VAPID_SUBJECT is optional (a mailto: or https: URL).
+// Apple).
+//
+// Keys: if VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are set they're used;
+// otherwise the server makes a key pair once and keeps it in the database,
+// so notifications work with no setup. VAPID_SUBJECT is optional.
 
 import { createECDH, createHash, createPrivateKey, createCipheriv, hkdfSync, randomBytes, sign, generateKeyPairSync } from "node:crypto";
 
@@ -67,11 +70,27 @@ export async function sendPush(subscription, message, vapid, { fetchImpl = fetch
 const subId = endpoint => createHash("sha256").update(endpoint).digest("hex").slice(0, 24);
 
 // Stores each person's subscriptions (one per device) and sends to them.
+export const DEFAULT_SUBJECT = "https://love-better.vercel.app";
+
 export class PushService {
-  constructor(store, { vapid = vapidFromEnv(), fetchImpl = fetch } = {}) {
-    this.store = store; this.kv = store.kv; this.vapid = vapid; this.fetch = fetchImpl;
+  constructor(store, { vapid = vapidFromEnv(), fetchImpl = fetch, autoKeys = true } = {}) {
+    this.store = store; this.kv = store.kv; this.vapid = vapid; this.fetch = fetchImpl; this.autoKeys = autoKeys;
   }
-  get enabled() { return !!this.vapid; }
+  get enabled() { return !!this.vapid || this.autoKeys; }
+
+  // The key pair to sign with: from the environment, or made once and stored.
+  async getVapid() {
+    if (this.vapid) return this.vapid;
+    if (!this.autoKeys) return null;
+    const k = this.store.key("vapid");
+    let saved = JSON.parse((await this.kv.get(k)) || "null");
+    if (!saved) {
+      await this.kv.set(k, JSON.stringify(generateVapidKeys()), { nx: true });   // first one wins
+      saved = JSON.parse(await this.kv.get(k));
+    }
+    this.vapid = { ...saved, subject: process.env.VAPID_SUBJECT || null };
+    return this.vapid;
+  }
 
   static validate(sub) {
     let ok = false;
@@ -96,18 +115,24 @@ export class PushService {
     await this.kv.hdel(this.store.key("push", uid), subId(String(endpoint)));
   }
   async sendTo(uid, message, opts = {}) {
-    if (!this.enabled) return { sent: 0 };
+    const vapid = await this.getVapid();
+    if (!vapid) return { sent: 0 };
     const k = this.store.key("push", uid), subs = await this.kv.hgetall(k);
     let sent = 0;
     await Promise.all(Object.entries(subs).map(async ([id, raw]) => {
       try {
-        const r = await sendPush(JSON.parse(raw), message, this.vapid, { fetchImpl: this.fetch, ...opts });
+        const r = await sendPush(JSON.parse(raw), message, vapid, { fetchImpl: this.fetch, subject: DEFAULT_SUBJECT, ...opts });
         if (r.gone) await this.kv.hdel(k, id);
         else if (r.status < 300) sent++;
       } catch (e) { console.error("push failed", e.message); }
     }));
     if (!Object.keys(subs).length) await this.kv.hdel(this.store.key("push_all"), uid);
     return { sent };
+  }
+  // The daily reminder: at most once every 20 hours, whoever asks.
+  async sendDaily(message, opts) {
+    if (!(await this.kv.set(this.store.key("daily_sent"), Date.now(), { ex: 20 * 3600, nx: true }))) return { skipped: "already sent today" };
+    return this.sendToEveryone(message, opts);
   }
   async sendToEveryone(message, opts) {
     const uids = Object.keys(await this.kv.hgetall(this.store.key("push_all")));

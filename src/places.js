@@ -86,9 +86,10 @@ export class PlacesService {
   // ~30 new searches a minute per person is plenty and protects the free quota.
   async #limit(uid) {
     const k = this.store.key("places_rate", uid, Math.floor(this.now() / 60000));
-    const n = Number(await this.kv.get(k)) || 0;
+    let n = 0;
+    try { n = Number(await this.kv.get(k)) || 0; } catch { return; }   // if the database is down, don't block searching
     if (n >= 30) throw new PairingError("slow_down", "That's a lot of searching! Try again in a minute.", 429);
-    await this.kv.set(k, n + 1, { ex: 90 });
+    try { await this.kv.set(k, n + 1, { ex: 90 }); } catch {}
   }
 
   async #geoapify(categories, lat, lon, radius) {
@@ -110,10 +111,12 @@ export class PlacesService {
     if (!this.key) throw new PairingError("places_not_configured", "Fast place search isn't set up on the server.", 501);
 
     // Cache by ~1 km area; distances are still measured from the exact point.
-    const ck = this.store.key("gplaces", cat, radius, lat.toFixed(2), lon.toFixed(2));
-    let data = await this.kv.get(ck);
-    if (data) data = JSON.parse(data);
-    else {
+    const ck = this.store.key("gplaces2", cat, radius, lat.toFixed(2), lon.toFixed(2));
+    let cached = null;
+    try { cached = JSON.parse(await this.kv.get(ck)); } catch {}
+    let places = cached;
+    if (!places) {
+      let data;
       await this.#limit(uid);
       const clat = Number(lat.toFixed(2)), clon = Number(lon.toFixed(2)), r = radius + 800;
       const cats = GEO_CATEGORIES[cat];
@@ -132,10 +135,15 @@ export class PlacesService {
         if (!ok.length) throw Object.assign(new PairingError("places_unavailable", "Place search is having trouble. Try again in a moment.", 503), { detail: bad });
         data = { features: ok.flatMap(p => p.value.features || []) };
       }
-      data = { features: (data.features || []).map(f => ({ properties: f.properties })) };
-      await this.kv.set(ck, JSON.stringify(data), { ex: 24 * 3600 });
+      // Keep only what the app shows: a few hundred bytes per place.
+      places = parseGeoapify(cat, data, clat, clon);
+      try { await this.kv.set(ck, JSON.stringify(places), { ex: 24 * 3600 }); }
+      catch (e) { console.error("places cache write failed:", e.message); }   // never break a search over caching
     }
-    const places = parseGeoapify(cat, data, lat, lon).filter(p => p.distance <= radius);
+    places = places
+      .map(p => ({ ...p, distance: distanceM(lat, lon, p.lat, p.lon) }))
+      .filter(p => p.distance <= radius)
+      .sort((a, b) => (a.distance - a.charm * 300) - (b.distance - b.charm * 300));
     return { cat, radius, places, source: "geoapify", attribution: "Powered by Geoapify · © OpenStreetMap contributors" };
   }
 
