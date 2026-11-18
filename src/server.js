@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createHandler } from "./api.js";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public/", import.meta.url));
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".webmanifest": "application/manifest+json" };
 
 export function createApp(options) {
   const api = createHandler(options);

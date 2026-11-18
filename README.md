@@ -1,76 +1,101 @@
 # Love Better
 
-Love Better Daily is a page-a-day reminder for loving people better. It includes **Heart Jump**, a game for two phones, and **code-based partner linking**.
+Love Better Daily is a page-a-day reminder for loving people better, plus a set of things to do with your partner.
 
 ![Love Better on a phone](docs/love-better-preview.png)
 
-## What’s here
+## Features
+
+**Today:** the daily reminder and practice, your streak, saved reminders. Once your partner has taken the quiz, you also get a daily tip for loving them their way.
+
+**Us** (after linking with your partner):
+- **Days together:** counts from the day you linked, or from a date you set, with the next milestone and anniversary.
+- **Nudges:** one tap sends "Thinking of you", "Miss you", "Proud of you" or a hug. It pops up on your partner's screen and, with notifications on, on their phone.
+- **Today:** your partner's mood and what would help them, plus your **shared streak**: the days you both practised the reminder.
+- **Question for two:** a new question every day. Answers stay hidden until you've both answered. Earlier answers are kept.
+- **How you each feel loved:** each person's love-language result, with a daily tip.
+- **Dates to remember:** birthdays, anniversaries and trips, with countdowns. They can repeat every year.
+- **Date ideas:** a shared list you both add to and tick off, with suggestions and a "Surprise me" button.
+
+**Play:** Heart Jump, the two-phone game, and the love-language quiz.
+
+**Me:** your name, partner linking, your sign-in key, notifications, and installing the app.
+
+**Install and notifications:** the app installs to the home screen and works offline. It can send a morning reminder and a ping when your partner nudges you or answers the question.
+
+## What's here
 
 | Path | What it is |
 | --- | --- |
-| `public/index.html` | The app: daily reminders, streaks, saved reminders, Heart Jump, and the new **Link with your partner** card |
-| `artifact/love-better-daily.html` | The original Love Better Daily artifact from claude.ai, unchanged, kept for reference |
-| `src/pairing.js` | Partner-linking logic (invite codes) |
-| `src/store.js` | Storage: Upstash Redis (used on Vercel) or in-memory (local) |
-| `src/api.js` | The API, shared by the local server and the Vercel functions |
+| `public/index.html` | The original Love Better Daily page, arranged into tabs |
+| `public/app.js` | Sign-in, linking, the Us tab, the quiz, notifications, install |
+| `public/sw.js`, `manifest.webmanifest`, icons | Installable app, offline support, notifications |
+| `artifact/love-better-daily.html` | The original artifact from claude.ai, unchanged |
+| `src/api.js` | Every API route, shared by the local server and Vercel |
+| `src/auth.js` | Sign-in keys |
+| `src/pairing.js` | Linking with invite codes |
+| `src/couple.js` | Everything a couple shares |
+| `src/push.js` | Web Push notifications (no dependencies) |
+| `src/store.js`, `src/kv.js` | Storage: Upstash Redis on Vercel, in-memory locally |
 | `src/server.js` | Local server for `npm start` |
-| `api/` | Vercel functions (each one just loads `src/api.js`) |
-| `vercel.json` | Vercel settings: serve `public/`, no build step |
+| `api/index.js` | The single Vercel function |
+| `vercel.json` | Vercel settings: static `public/`, API rewrite, daily cron |
 | `test/` | Tests (`npm test`) |
 
-## Run it
+## Run it locally
 
 ```bash
-npm start          # http://localhost:3000  (PORT=... to change). Uses memory, or Redis if the Upstash variables are set
+npm start     # http://localhost:3000 (PORT=... to change)
 npm test
 ```
 
-Needs Node 18+. There are no dependencies to install.
+Needs Node 18+. There are no dependencies to install. Locally, data is kept in memory unless the Upstash variables below are set.
 
 ## Deploy on Vercel
 
-Vercel runs short-lived functions with no memory between requests, so partner links need a database. The app uses **Upstash Redis**, which has a free plan.
+1. **Database (required).** In the Vercel project, open **Storage** (or **Marketplace**), add **Upstash for Redis**, and connect it to this project. This sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
+2. **Notifications (optional).** Run `npm run vapid` on your computer and add the two printed values as environment variables: `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`. Optionally also set `VAPID_SUBJECT` to `mailto:you@example.com` or your site's URL.
+3. **Morning reminder (optional, needs step 2).** Add a `CRON_SECRET` environment variable set to any long random string. Vercel then calls `/api/cron/daily` every day at 07:00 UTC. To change the time, edit `crons` in `vercel.json`. On the Hobby plan, Vercel runs it once a day, sometime within that hour.
+4. **Redeploy** so the variables take effect.
 
-1. Import this repo into Vercel. Leave the framework preset as **Other**; `vercel.json` sets everything else.
-2. In the Vercel project, open **Storage** (or **Marketplace**), add **Upstash for Redis**, and connect it to this project. This sets the `KV_REST_API_URL` and `KV_REST_API_TOKEN` environment variables for you. `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work.
-3. **Redeploy** so the new variables take effect.
+Without a database, the page still works and the Me tab explains what's missing. Without VAPID keys, everything works except notifications.
 
-Until the database is connected, the page still works, and the link card explains what's missing.
+**Notifications on iPhone:** add the app to the Home Screen first (Safari → Share → Add to Home Screen), then turn notifications on from the installed app. This needs iOS 16.4 or newer.
 
-Heart Jump checks in with the server about every 0.6 seconds while the game is open, and stops when it's closed. Each check-in uses a few Redis commands, so a long session uses a few thousand of the free plan's monthly allowance.
+## Accounts and sign-in
+
+There are no passwords. Each phone makes a secret **sign-in key** (25 characters), and the server only stores a hash of it. To use the same account on a new phone, copy the key or the **sign-in link** from the Me tab. Lose the key and the account is lost, so the app reminds people to save it.
 
 ## How linking works
 
-1. Partner A taps **Get a code** and gets a code like `KVK-DFY`, then shares it.
-2. Partner B types it in and taps **Link**. Both phones now show "You're linked".
-3. Heart Jump now connects the two linked phones through a private room that only the couple can join.
-
-Rules:
-- Codes are 6 characters with no look-alike characters (no 0/O or 1/I/L). Dashes, spaces and lowercase are accepted when typing.
-- A code works **once** and **expires after 24 hours**. Making a new code cancels the old one.
-- You can't use your own code, and nobody can be linked to two partners at once.
-- After 5 wrong codes in 15 minutes, code entry is locked for a while to stop guessing.
-- Either partner can **Unlink**. That ends the link for both of them and closes their room.
-
-On claude.ai, Heart Jump still uses the artifact's built-in live room, as before.
+1. Partner A taps **Get a code** (for example `KVK-DFY`) and shares it.
+2. Partner B enters it and taps **Link**.
+3. Codes work once, expire after 24 hours, and can't be used by their owner. Nobody can be linked to two people. After 5 wrong codes in 15 minutes, code entry is locked for a while.
+4. Either partner can **Unlink**. That deletes everything the couple shared.
 
 ## API
 
-All requests identify the user with an `X-User-Id` header.
+Every request (except `/api/push/key` and the cron) sends `Authorization: Bearer <sign-in key>`. Errors come back as `{ error, message }`.
 
-| Method & path | Body | Result |
+| Route | Body / query | |
 | --- | --- | --- |
-| `GET /api/link` | | `{ linked, partnerId, coupleId }` or `{ linked: false, invite }` |
-| `POST /api/link/invite` | | `{ code, display, expiresAt }` |
-| `DELETE /api/link/invite` | | `{ cancelled }` |
-| `POST /api/link/redeem` | `{ code }` | `{ coupleId, partnerId, linkedAt }` |
-| `DELETE /api/link` | | `{ unlinked, coupleId }` |
-| `GET /api/room?peer=ID` | | Checks in, and returns `{ peers }`: the couple's open game screens and their state |
-| `POST /api/room/presence` | `{ peer, presence }` | `{ ok }` (replaces that screen's state) |
-
-Errors come back as `{ error, message }` with a fitting status code, for example `404 invalid_code`, `410 expired_code` or `429 too_many_attempts`.
-
-## Before production
-
-- **Identity:** each device makes a random id, which is fine for a demo. Replace `X-User-Id` with real sign-in so a link belongs to an account rather than a browser.
-- **Storage:** locally, without Redis variables, links are kept in memory and lost on restart. Set the Upstash variables to use Redis locally too.
+| `GET /api/me`, `PUT /api/me` | `{ name }` | Your profile and link status |
+| `GET /api/link` | | Link status |
+| `POST /api/link/invite`, `DELETE /api/link/invite` | | Make or cancel your code |
+| `POST /api/link/redeem` | `{ code }` | Link with the code's owner |
+| `DELETE /api/link` | | Unlink, deleting shared data |
+| `GET /api/us` | `?date=YYYY-MM-DD` | Everything for the Us tab |
+| `GET /api/us/answers` | `?date=` | The last 14 days both of you answered |
+| `POST /api/us/answer` | `{ date, text }` | Answer the question for two |
+| `POST /api/us/nudge` | `{ kind }`: `thinking`, `miss`, `proud`, `hug` | |
+| `PUT /api/us/practice` | `{ dates: [...] }` | Days you practised |
+| `PUT /api/us/mood` | `{ date, mood, need }` | |
+| `PUT /api/us/since` | `{ since }` | Together-since date |
+| `POST /api/us/dates`, `DELETE /api/us/dates?id=` | `{ title, date, yearly }` | |
+| `POST /api/us/ideas`, `PATCH /api/us/ideas`, `DELETE /api/us/ideas?id=` | `{ text }`, `{ id, done }` | |
+| `PUT /api/us/lang` | `{ scores }` | Quiz result |
+| `GET /api/push/key` | | Public key for notifications |
+| `POST /api/push/subscribe`, `DELETE /api/push/subscribe` | `{ subscription }`, `{ endpoint }` | |
+| `POST /api/push/test` | | Sends yourself a test notification |
+| `GET /api/room?peer=`, `POST /api/room/presence` | `{ peer, presence }` | Heart Jump |
+| `GET /api/cron/daily` | `Authorization: Bearer $CRON_SECRET` | Morning reminder to everyone |

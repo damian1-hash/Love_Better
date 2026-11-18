@@ -2,12 +2,13 @@
   "name": "love-better",
   "version": "0.1.0",
   "private": true,
-  "description": "Love Better – partner linking via invite codes",
+  "description": "Love Better \u2013 partner linking via invite codes",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "vapid": "node scripts/vapid.js"
   },
   "engines": {
     "node": ">=18"

@@ -24,6 +24,7 @@ export async function startFakeUpstash(token = "test-token") {
       case "HSET": { const e = live(a[0]) ?? { v: new Map(), exp: 0 }; e.v.set(a[1], a[2]); kv.set(a[0], e); return 1; }
       case "HSETNX": { const e = live(a[0]) ?? { v: new Map(), exp: 0 }; kv.set(a[0], e); if (e.v.has(a[1])) return 0; e.v.set(a[1], a[2]); return 1; }
       case "HGET": return live(a[0])?.v.get(a[1]) ?? null;
+      case "HLEN": return live(a[0])?.v.size ?? 0;
       case "HGETALL": { const e = live(a[0]); return e ? [...e.v].flat() : []; }
       case "HDEL": { const e = live(a[0]); let n = 0; if (e) for (const f of a.slice(1)) n += e.v.delete(f) ? 1 : 0; return n; }
       case "EXPIRE": { const e = live(a[0]); if (!e) return 0; e.exp = Date.now() + Number(a[1]) * 1000; return 1; }
