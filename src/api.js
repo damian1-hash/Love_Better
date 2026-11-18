@@ -9,6 +9,7 @@ import { PairingService, PairingError } from "./pairing.js";
 import { CoupleService } from "./couple.js";
 import { PushService } from "./push.js";
 import { userIdFromRequest } from "./auth.js";
+import { PlacesService } from "./places.js";
 
 const LIVE_MS = 6_000;     // a game screen that hasn't checked in for this long is gone
 const PRUNE_MS = 60_000;   // forget game screens this stale
@@ -20,10 +21,11 @@ const NUDGE_TEXT = {
   hug: ["sent you a hug", "🤗"],
 };
 
-export function createHandler({ store = createStore(), pairingOptions, requireStorage = false, push, env = process.env } = {}) {
+export function createHandler({ store = createStore(), pairingOptions, requireStorage = false, push, places, env = process.env } = {}) {
   const pairing = new PairingService(store, pairingOptions);
   const couples = new CoupleService(store, pairingOptions);
   const pushes = push ?? new PushService(store);
+  const finder = places ?? new PlacesService(store);
 
   function send(res, status, body) {
     res.statusCode = status;
@@ -173,6 +175,12 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const couple = await coupleOf(uid), { scores } = await readJson(req);
         return send(res, 200, await couples.setLang(uid, couple, scores));
       }
+
+      // ----- places nearby -----
+      case "GET /api/places":
+        return send(res, 200, await finder.nearby(uid, { lat: q.get("lat"), lon: q.get("lon"), radius: q.get("radius"), cat: q.get("cat") }));
+      case "GET /api/places/search":
+        return send(res, 200, await finder.geocode(uid, q.get("q")));
 
       // ----- notifications -----
       case "POST /api/push/subscribe": {

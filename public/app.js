@@ -226,7 +226,7 @@ async function loadUs() {
 }
 
 /* ---------------- tabs ---------------- */
-const TABS = ["today", "us", "play", "me"];
+const TABS = ["today", "us", "explore", "play", "me"];
 function setTab(t, fromHash) {
   if (!TABS.includes(t)) t = "today";
   S.tab = t; ls.set("lb-tab", t);
@@ -236,6 +236,7 @@ function setTab(t, fromHash) {
   }
   if (!fromHash) window.scrollTo(0, 0);
   if (t === "us" && linked()) loadUs();
+  if (t === "explore" && X.where && !X.places && !X.loading) loadPlaces();
   renderAll();
 }
 document.querySelectorAll(".tabbar button").forEach(b => b.addEventListener("click", () => setTab(b.dataset.go)));
@@ -530,6 +531,121 @@ async function setMood(mood, need) {
   try { await api("PUT", "/api/us/mood", { date: today(), mood, need }); await loadUs(); } catch (e) { usMsg = e.message; renderUs(); }
 }
 
+
+/* ---------------- Explore tab: places nearby ---------------- */
+const PLACE_CATS = [["dinner", "🍷", "Romantic dinner"], ["cafe", "☕", "Cafés & sweets"], ["drinks", "🍸", "Drinks"], ["outdoors", "🌳", "Outdoors"], ["culture", "🎭", "Culture"], ["fun", "🎳", "Fun & games"]];
+const RADII = [[1000, "1 km"], [2000, "2 km"], [5000, "5 km"], [10000, "10 km"]];
+const X = {
+  where: ls.get("lb-where", null),   // { lat, lon, label }
+  cat: ls.get("lb-place-cat", "dinner"),
+  radius: ls.get("lb-place-radius", 2000),
+  places: null, loading: false, err: "", locating: false,
+  search: null, pick: null, added: {},
+};
+const fmtDist = m => m < 950 ? Math.max(50, Math.round(m / 50) * 50) + " m" : (m < 9500 ? String(Math.round(m / 100) / 10) : String(Math.round(m / 1000))) + " km";
+const walkMin = m => Math.max(1, Math.round(m / 80));
+// Round to ~100 m before the location leaves the phone.
+const roughly = n => Math.round(n * 1000) / 1000;
+
+function setWhere(lat, lon, label) {
+  X.where = { lat: roughly(lat), lon: roughly(lon), label };
+  ls.set("lb-where", X.where); X.search = null; loadPlaces();
+}
+function locate() {
+  if (!navigator.geolocation) { X.err = "This browser can't share your location. Search for a place instead."; return renderExplore(); }
+  X.locating = true; X.err = ""; renderExplore();
+  navigator.geolocation.getCurrentPosition(
+    pos => { X.locating = false; setWhere(pos.coords.latitude, pos.coords.longitude, "Near you"); },
+    err => { X.locating = false; X.err = err.code === 1 ? "Location is blocked. Allow it in your browser settings, or search for a place instead." : "Couldn't find your location. Try again or search instead."; renderExplore(); },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 5 * 60000 });
+}
+async function loadPlaces() {
+  if (!X.where) return renderExplore();
+  X.loading = true; X.err = ""; X.pick = null; renderExplore();
+  try {
+    const r = await api("GET", "/api/places?lat=" + X.where.lat + "&lon=" + X.where.lon + "&radius=" + X.radius + "&cat=" + X.cat);
+    X.places = r.places;
+  } catch (e) { X.places = null; X.err = e.message; }
+  X.loading = false; renderExplore();
+}
+async function searchArea(q) {
+  X.err = ""; X.search = { q, results: null }; renderExplore();
+  try { X.search.results = (await api("GET", "/api/places/search?q=" + encodeURIComponent(q))).results; }
+  catch (e) { X.search = null; X.err = e.message; }
+  renderExplore();
+}
+function mapsUrl(p) {
+  if (isIOS()) return "https://maps.apple.com/?daddr=" + p.lat + "," + p.lon + "&q=" + encodeURIComponent(p.name);
+  return "https://www.google.com/maps/dir/?api=1&destination=" + p.lat + "," + p.lon + "&travelmode=walking";
+}
+async function addPlaceIdea(p) {
+  try {
+    await api("POST", "/api/us/ideas", { text: (p.kind === "Place" ? "" : p.kind + ": ") + p.name + " (" + fmtDist(p.distance) + " away)" });
+    X.added[p.id] = true; toast("💌", "Added to your date ideas with " + partnerName() + ".", "See list", () => setTab("us"));
+    renderExplore(); if (S.us) loadUs();
+  } catch (e) { toast("⚠️", e.message); }
+}
+
+function placeCard(p) {
+  const meta = [h("span", {}, h("b", { text: fmtDist(p.distance) }), p.distance <= 3000 ? " · " + walkMin(p.distance) + " min walk" : null), h("span", { text: p.kind })];
+  if (p.cuisine) meta.push(h("span", { text: p.cuisine }));
+  if (p.outdoor) meta.push(h("span", { text: "☀️ Outdoor seating" }));
+  return h("article", { class: "place" + (X.pick === p.id ? " pick" : ""), id: "place-" + p.id },
+    X.pick === p.id ? h("span", { class: "eyebrow", style: "color:var(--accent)", text: "🎲 Tonight's pick" }) : null,
+    h("h3", { text: p.name }),
+    h("div", { class: "meta" }, meta),
+    p.hours ? h("p", { class: "small", text: "🕒 " + p.hours }) : null,
+    h("div", { class: "actions" },
+      h("a", { class: "btn small accent", href: mapsUrl(p), target: "_blank", rel: "noopener", text: "Directions" }),
+      linked() ? h("button", { class: "btn small", disabled: !!X.added[p.id], text: X.added[p.id] ? "✓ In date ideas" : "♡ Save for a date", onclick: () => addPlaceIdea(p) }) : null,
+      p.website ? h("a", { class: "btn small", href: p.website, target: "_blank", rel: "noopener nofollow", text: "Website" }) : null));
+}
+
+function renderExplore() {
+  const tab = $("tab-explore"); tab.replaceChildren();
+  if (S.online === false) { tab.append(h("section", { class: "card" }, h("h2", { text: "Places for two" }), h("p", { class: "sub", text: "Exploring needs the Love Better server. Open the app from its web address." }))); return; }
+  if (S.setup) { tab.append(h("section", { class: "card" }, h("h2", { text: "Places for two" }), h("p", { class: "msg err", text: S.setup }))); return; }
+
+  const q = h("input", { class: "field", type: "search", placeholder: "Search a town or area", "aria-label": "Search a place", enterkeyhint: "search", value: X.search ? X.search.q : "" });
+  const head = h("section", { class: "card", "aria-labelledby": "exploreH" },
+    h("h2", { id: "exploreH", text: "Places for two" }),
+    h("p", { class: "sub", text: "Romantic and fun spots around you, for your next date." }),
+    X.where ? h("div", { class: "where" }, h("span", { text: "📍" }), h("b", { text: X.where.label }), h("button", { class: "linkbtn", text: X.locating ? "Locating…" : "Use my location", onclick: locate, disabled: X.locating })) :
+      h("button", { class: "btn accent", style: "align-self:flex-start", text: X.locating ? "Finding you…" : "📍 Use my location", onclick: locate, disabled: X.locating }),
+    h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (q.value.trim()) searchArea(q.value.trim()); } }, q, h("button", { class: "btn", type: "submit", text: "Search" })));
+  if (X.search) {
+    head.append(X.search.results == null ? h("p", { class: "small", text: "Searching…" })
+      : !X.search.results.length ? h("p", { class: "small", text: "Nothing found for “" + X.search.q + "”. Try a different spelling or a nearby town." })
+      : h("ul", { class: "list" }, X.search.results.map(r => h("li", {}, h("div", { class: "grow" }, h("span", { text: r.name })),
+          h("button", { class: "btn small", text: "Go", onclick: () => setWhere(r.lat, r.lon, r.name.split(",").slice(0, 2).join(",")) })))));
+  }
+  head.append(
+    h("div", { class: "chips scroll", role: "group", "aria-label": "Kind of place" }, PLACE_CATS.map(([c, e, l]) => h("button", { class: "chip", "aria-pressed": String(X.cat === c), onclick: () => { X.cat = c; ls.set("lb-place-cat", c); loadPlaces(); } }, e + " " + l))),
+    h("div", { class: "row", role: "group", "aria-label": "How far" }, h("span", { class: "eyebrow", text: "Within" }), h("div", { class: "chips" }, RADII.map(([r, l]) => h("button", { class: "chip", "aria-label": "Within " + l, "aria-pressed": String(X.radius === r), onclick: () => { X.radius = r; ls.set("lb-place-radius", r); loadPlaces(); } }, l)))));
+  if (X.err) head.append(h("p", { class: "msg err", text: X.err }));
+  tab.append(head);
+
+  if (!X.where) return;
+  if (X.loading) { tab.append(h("section", { class: "card" }, h("p", { class: "sub", text: "Finding lovely places…" }))); return; }
+  if (!X.places) return;
+  const cat = PLACE_CATS.find(c => c[0] === X.cat);
+  if (!X.places.length) {
+    tab.append(h("section", { class: "card" }, h("p", { class: "sub", text: "No " + cat[2].toLowerCase() + " spots found within " + fmtDist(X.radius) + ". Try a bigger distance or another kind of place." }),
+      X.radius < 10000 ? h("button", { class: "btn small", style: "align-self:flex-start", text: "Search within " + fmtDist(RADII.find(r => r[0] > X.radius)[0]), onclick: () => { X.radius = RADII.find(r => r[0] > X.radius)[0]; ls.set("lb-place-radius", X.radius); loadPlaces(); } }) : null));
+    return;
+  }
+  tab.append(h("div", { class: "row between" },
+    h("span", { class: "small", text: plural(X.places.length, "place") + " · " + cat[1] + " " + cat[2] }),
+    h("button", { class: "btn small accent", text: "🎲 Pick for us", onclick: () => {
+      const pool = X.places.slice(0, 25), p = pool[Math.floor(Math.random() * pool.length)];
+      X.pick = p.id; renderExplore(); document.getElementById("place-" + p.id).scrollIntoView({ behavior: "smooth", block: "center" });
+    } })));
+  const list = [...X.places];
+  if (X.pick) list.sort((a, b) => (b.id === X.pick) - (a.id === X.pick));
+  tab.append(h("div", { class: "places" }, list.map(placeCard)));
+  tab.append(h("p", { class: "osm" }, "Places from ", h("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener", text: "© OpenStreetMap contributors" }), ". Check opening hours before you go."));
+}
+
 /* ---------------- Play tab: quiz ---------------- */
 let quiz = null; // { i, scores, order }
 function startQuiz() {
@@ -688,6 +804,7 @@ function renderAll() {
   else if (S.tab === "us") renderUs();
   else if (S.tab === "me") renderMe();
   else if (S.tab === "play") renderQuiz();
+  else if (S.tab === "explore") renderExplore();
   if (S.tab === "today" && window.render) window.render();
   $("meDot").hidden = !(S.me && !linked() && !S.setup);
   $("usDot").hidden = !(linked() && S.us && S.us.question.partnerAnswered && !S.us.question.mine);

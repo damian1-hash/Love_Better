@@ -17,6 +17,8 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 - **Dates to remember:** birthdays, anniversaries and trips, with countdowns. They can repeat every year.
 - **Date ideas:** a shared list you both add to and tick off, with suggestions and a "Surprise me" button.
 
+**Explore:** romantic and fun places near you, or near any town you search for. Pick a kind of place (romantic dinner, cafés & sweets, drinks, outdoors, culture, fun & games) and a distance (1–10 km). Each place shows its distance, walking time, cuisine, opening hours and outdoor seating, plus buttons for directions and its website. **Pick for us** chooses one for you, and **Save for a date** adds a place to your shared date ideas. Place data comes from OpenStreetMap, which is free and needs no API key.
+
 **Play:** Heart Jump, the two-phone game, and the love-language quiz.
 
 **Me:** your name, partner linking, your sign-in key, notifications, and installing the app.
@@ -36,6 +38,7 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 | `src/pairing.js` | Linking with invite codes |
 | `src/couple.js` | Everything a couple shares |
 | `src/push.js` | Web Push notifications (no dependencies) |
+| `src/places.js` | Nearby places (OpenStreetMap Overpass) and place search (Nominatim), cached |
 | `src/store.js`, `src/kv.js` | Storage: Upstash Redis on Vercel, in-memory locally |
 | `src/server.js` | Local server for `npm start` |
 | `api/index.js` | The single Vercel function |
@@ -61,6 +64,10 @@ Needs Node 18+. There are no dependencies to install. Locally, data is kept in m
 Without a database, the page still works and the Me tab explains what's missing. Without VAPID keys, everything works except notifications.
 
 **Notifications on iPhone:** add the app to the Home Screen first (Safari → Share → Add to Home Screen), then turn notifications on from the installed app. This needs iOS 16.4 or newer.
+
+## Places and privacy
+
+The phone rounds its location to about 100 m before sending it, and the server caches results for each area (about 1 km) for a day. That keeps searches fast and stays within OpenStreetMap's fair-use rules. Each person can run up to 30 new searches a minute. Map data © OpenStreetMap contributors (ODbL); the page shows this credit.
 
 ## Accounts and sign-in
 
@@ -94,6 +101,8 @@ Every request (except `/api/push/key` and the cron) sends `Authorization: Bearer
 | `POST /api/us/dates`, `DELETE /api/us/dates?id=` | `{ title, date, yearly }` | |
 | `POST /api/us/ideas`, `PATCH /api/us/ideas`, `DELETE /api/us/ideas?id=` | `{ text }`, `{ id, done }` | |
 | `PUT /api/us/lang` | `{ scores }` | Quiz result |
+| `GET /api/places` | `?lat=&lon=&radius=1000\|2000\|5000\|10000&cat=dinner\|cafe\|drinks\|outdoors\|culture\|fun` | Places nearby |
+| `GET /api/places/search` | `?q=` | Find a town or area |
 | `GET /api/push/key` | | Public key for notifications |
 | `POST /api/push/subscribe`, `DELETE /api/push/subscribe` | `{ subscription }`, `{ endpoint }` | |
 | `POST /api/push/test` | | Sends yourself a test notification |

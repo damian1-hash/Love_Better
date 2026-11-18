@@ -237,7 +237,7 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--leaf); border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  display: grid; grid-template-columns: repeat(5, 1fr); padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
 }
 .tabbar button { border: 0; background: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; font: 600 12px var(--body); padding: 6px 0; cursor: pointer; position: relative; }
 .tabbar svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -256,6 +256,22 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 .toast p { margin: 0; flex: 1; font-weight: 600; }
 .toast button { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 8px 12px; font: 600 13px var(--body); cursor: pointer; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+.chips.scroll { flex-wrap: nowrap; overflow-x: auto; margin: 0 -18px; padding: 2px 18px 4px; scrollbar-width: none; }
+.chips.scroll::-webkit-scrollbar { display: none; }
+.chips.scroll .chip { flex: none; }
+.where { display: flex; gap: 10px; align-items: center; background: var(--paper); border-radius: 14px; padding: 10px 12px; }
+.where b { flex: 1; min-width: 0; font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.places { display: flex; flex-direction: column; gap: 12px; }
+.place { background: var(--leaf); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.place.pick { border: 2px solid var(--accent); box-shadow: 0 10px 24px -14px var(--accent); }
+.place h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 21px; line-height: 1.2; }
+.place .meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 14px; color: var(--muted); }
+.place .meta b { color: var(--ink); font-weight: 600; }
+.place .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.place .actions a, .place .actions button { text-decoration: none; display: inline-flex; align-items: center; }
+.osm { font-size: 12px; color: var(--muted); text-align: center; }
+.osm a { color: inherit; }
 </style>
 </head>
 <body>
@@ -309,6 +325,8 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 
   <div class="tab" id="tab-us" data-tab="us" hidden></div>
 
+  <div class="tab" id="tab-explore" data-tab="explore" hidden></div>
+
   <div class="tab" id="tab-play" data-tab="play" hidden>
   <section class="gamecard" aria-labelledby="gameH">
     <h2 id="gameH">Heart Jump</h2>
@@ -326,6 +344,7 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 <nav class="tabbar" aria-label="Sections">
   <button data-go="today" aria-current="page"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>Today</button>
   <button data-go="us"><svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/></svg><i class="dot" id="usDot" hidden></i>Us</button>
+  <button data-go="explore"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>Explore</button>
   <button data-go="play"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="5"/><path d="M8 10.5v4M6 12.5h4M15.5 11.5h.01M17.5 13.5h.01"/></svg>Play</button>
   <button data-go="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.2-3.6 4-5.3 7.5-5.3s6.3 1.7 7.5 5.3"/></svg><i class="dot" id="meDot" hidden></i>Me</button>
 </nav>
