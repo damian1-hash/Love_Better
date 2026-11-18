@@ -49,15 +49,18 @@ export function parseGeoapify(cat, data, lat, lon) {
   const seen = new Set(), out = [];
   for (const f of (data && data.features) || []) {
     const p = f.properties || {}, raw = (p.datasource && p.datasource.raw) || {};
-    const name = p.name || raw.name;
-    if (!name || p.lat == null || p.lon == null) continue;
+    // Some values arrive as numbers (a café called "1004"), so make everything text.
+    const str = v => (v == null || v === "" ? null : typeof v === "object" ? null : String(v));
+    const name = str(p.name) || str(raw.name);
+    if (!name || typeof p.lat !== "number" || typeof p.lon !== "number") continue;
     if (raw.access === "private") continue;
     const key = name.toLowerCase() + "|" + p.lat.toFixed(3) + "|" + p.lon.toFixed(3);
     if (seen.has(key)) continue;
     seen.add(key);
-    const cuisine = (p.catering && p.catering.cuisine) || raw.cuisine || null;
-    const website = p.website || (p.contact && p.contact.website) || raw.website || raw["contact:website"] || null;
-    const cats = p.categories || [];
+    const cuisine = str(p.catering && p.catering.cuisine) || str(raw.cuisine);
+    const website = str(p.website) || str(p.contact && p.contact.website) || str(raw.website) || str(raw["contact:website"]);
+    const hours = str(p.opening_hours) || str(raw.opening_hours);
+    const cats = Array.isArray(p.categories) ? p.categories.map(String) : [];
     if (cat === "dinner" && /fast_food/.test(cats.join(" "))) continue;
     out.push({
       id: "g" + createHash("sha1").update(String(p.place_id || key)).digest("hex").slice(0, 12),
@@ -66,12 +69,12 @@ export function parseGeoapify(cat, data, lat, lon) {
       cat,
       lat: Number(p.lat.toFixed(6)), lon: Number(p.lon.toFixed(6)),
       distance: distanceM(lat, lon, p.lat, p.lon),
-      address: p.address_line2 || null,
+      address: str(p.address_line2),
       cuisine: cuisine ? String(cuisine).split(/[;,]/).map(s => s.trim().replace(/_/g, " ")).filter(Boolean).slice(0, 3).join(", ") : null,
-      hours: p.opening_hours || raw.opening_hours || null,
+      hours,
       website: website && /^https?:\/\//i.test(website) ? website : website ? "https://" + website : null,
       outdoor: raw.outdoor_seating === "yes" || !!(p.facilities && p.facilities.outdoor_seating),
-      charm: charm({ ...raw, website, opening_hours: p.opening_hours || raw.opening_hours, cuisine: raw.cuisine || cuisine }),
+      charm: charm({ ...raw, website, opening_hours: hours, cuisine }),
     });
   }
   out.sort((a, b) => (a.distance - a.charm * 300) - (b.distance - b.charm * 300));

@@ -63,7 +63,8 @@ export function parsePlaces(cat, data, lat, lon) {
   const seen = new Set(), out = [];
   for (const el of data.elements || []) {
     const t = el.tags || {}, plat = el.lat ?? el.center?.lat, plon = el.lon ?? el.center?.lon;
-    if (!t.name || plat == null || plon == null) continue;
+    if (t.name == null || t.name === "" || typeof plat !== "number" || typeof plon !== "number") continue;
+    t.name = String(t.name);
     if (t.access === "private" || t.disused === "yes") continue;
     const key = t.name.toLowerCase() + "|" + plat.toFixed(3) + "|" + plon.toFixed(3);
     if (seen.has(key)) continue;

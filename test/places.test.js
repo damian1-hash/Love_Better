@@ -141,3 +141,18 @@ test("big results are cached compactly, and a failed cache write never breaks a 
   const r2 = await new PlacesService(store, { fetchImpl: async () => ({ ok: true, json: async () => many }), geoapifyKey: KEY }).nearby("u", { ...HERE, radius: 5000, cat: "cafe" }).catch(e => e);
   assert.equal(r2.places.length, 60, String(r2.message));
 });
+
+test("places whose name or details are numbers (a café called 1004) don't crash the search", async () => {
+  const odd = { features: [
+    { properties: { place_id: 1, name: 1004, lat: 6.431, lon: 3.421, categories: ["catering.cafe"], opening_hours: 24, website: 7, address_line2: 12, catering: { cuisine: 5 } } },
+    { properties: { place_id: 2, name: { en: "Weird" }, lat: 6.431, lon: 3.421, categories: ["catering.cafe"] } },
+    { properties: { place_id: 3, name: "Fine Café", lat: "6.43", lon: 3.421, categories: ["catering.cafe"] } },
+    { properties: { place_id: 4, name: "Bean There", lat: 6.4302, lon: 3.4201, categories: "catering.cafe" } },
+  ] };
+  const svc = new PlacesService(new MemoryStore(), { fetchImpl: async () => ({ ok: true, json: async () => odd }), geoapifyKey: KEY });
+  const r = await svc.nearby("u", { lat: 6.43, lon: 3.42, radius: 2000, cat: "cafe" });
+  assert.deepEqual(r.places.map(p => p.name).sort(), ["1004", "Bean There"]);
+  const p = r.places.find(x => x.name === "1004");
+  assert.equal(p.hours, "24"); assert.equal(p.address, "12"); assert.equal(p.cuisine, "5");
+  assert.deepEqual(parsePlaces("cafe", { elements: [{ type: "node", id: 1, lat: 6.43, lon: 3.42, tags: { name: 1004 } }] }, 6.43, 3.42).map(p => p.name), ["1004"]);
+});
