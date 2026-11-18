@@ -1,7 +1,7 @@
 // Love Better service worker: works offline (last-seen version of the app)
 // and shows push notifications.
-const CACHE = "lb-v1";
-const SHELL = ["/", "/index.html", "/app.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png"];
+const CACHE = "lb-v2";
+const SHELL = ["/", "/index.html", "/app.js", "/manifest.webmanifest", "/icon-192.png", "/logo-mark.png", "/favicon-32.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));

@@ -5,9 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Love Better Daily</title>
 <meta name="description" content="A daily reminder to love better, with games and questions for two.">
-<meta name="theme-color" content="#BE2450">
+<meta name="theme-color" content="#7A0A4E">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="favicon-48.png" sizes="48x48" type="image/png">
+<meta property="og:title" content="Love Better">
+<meta property="og:description" content="A daily reminder to love better, with games, questions and date ideas for two.">
+<meta property="og:image" content="https://love-better.vercel.app/og-image.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Love Better">
@@ -52,6 +57,8 @@ body {
 header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .brand { font-family: var(--display); font-size: 22px; margin: 0; letter-spacing: .01em; }
 .brand span { color: var(--accent); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand .logo { width: 40px; height: 40px; border-radius: 11px; flex: none; box-shadow: 0 4px 12px -6px rgba(122,10,78,.6); }
 .streak { font-size: 14px; color: var(--muted); font-weight: 500; }
 .streak b { color: var(--ink); font-variant-numeric: tabular-nums; }
 
@@ -277,7 +284,7 @@ textarea.field { min-height: 88px; resize: vertical; line-height: 1.45; }
 <body>
 <div class="wrap">
   <header>
-    <h1 class="brand">Love Better <span>Daily</span></h1>
+    <h1 class="brand"><img class="logo" src="logo-mark.png" alt="" width="40" height="40">Love Better <span>Daily</span></h1>
     <div class="streak" id="streak"></div>
   </header>
 

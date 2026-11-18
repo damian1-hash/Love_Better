@@ -2,6 +2,8 @@
 
 Love Better Daily is a page-a-day reminder for loving people better, plus a set of things to do with your partner.
 
+<img src="public/icon-192.png" alt="Love Better logo" width="96" height="96">
+
 ![Love Better on a phone](docs/love-better-preview.png)
 
 ## Features
@@ -31,7 +33,8 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 | --- | --- |
 | `public/index.html` | The original Love Better Daily page, arranged into tabs |
 | `public/app.js` | Sign-in, linking, the Us tab, the quiz, notifications, install |
-| `public/sw.js`, `manifest.webmanifest`, icons | Installable app, offline support, notifications |
+| `public/sw.js`, `manifest.webmanifest` | Installable app, offline support, notifications |
+| `public/icon-*.png`, `apple-touch-icon.png`, `favicon-*.png`, `logo-mark.png`, `og-image.jpg` | Logo and app icons, made from `docs/logo-original.png` |
 | `artifact/love-better-daily.html` | The original artifact from claude.ai, unchanged |
 | `src/api.js` | Every API route, shared by the local server and Vercel |
 | `src/auth.js` | Sign-in keys |
