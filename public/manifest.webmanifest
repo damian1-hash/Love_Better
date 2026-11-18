@@ -24,5 +24,59 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "Question for two",
+      "short_name": "Question",
+      "description": "Answer today's question together",
+      "url": "/#us",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Send a nudge",
+      "short_name": "Nudge",
+      "description": "Let your partner know you're thinking of them",
+      "url": "/#us",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Places for two",
+      "short_name": "Explore",
+      "description": "Find a date spot nearby",
+      "url": "/#explore",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Heart Jump",
+      "short_name": "Heart Jump",
+      "description": "Play the two-phone game",
+      "url": "/#heart-jump",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
   ]
 }

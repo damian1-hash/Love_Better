@@ -1,6 +1,6 @@
 // Love Better service worker: works offline (last-seen version of the app)
 // and shows push notifications.
-const CACHE = "lb-v4";
+const CACHE = "lb-v5";
 const SHELL = ["/", "/index.html", "/app.js", "/places-core.js", "/manifest.webmanifest", "/icon-192.png", "/logo-mark.png", "/favicon-32.png"];
 
 self.addEventListener("install", e => {
@@ -20,12 +20,22 @@ self.addEventListener("fetch", e => {
   }).catch(() => caches.match(e.request).then(r => r || caches.match("/"))));
 });
 
+// Unread count for the red badge on the app icon (kept in a tiny cache entry).
+async function bumpBadge() {
+  if (!self.navigator.setAppBadge) return;
+  const c = await caches.open("lb-badge");
+  const r = await c.match("/badge-count");
+  const n = (r ? Number(await r.text()) : 0) + 1;
+  await c.put("/badge-count", new Response(String(n)));
+  await self.navigator.setAppBadge(n).catch(() => {});
+}
+
 self.addEventListener("push", e => {
   let m = {};
   try { m = e.data ? e.data.json() : {}; } catch (err) { m = { body: e.data && e.data.text() }; }
-  e.waitUntil(self.registration.showNotification(m.title || "Love Better", {
+  e.waitUntil(Promise.all([m.badge ? bumpBadge() : null, self.registration.showNotification(m.title || "Love Better", {
     body: m.body || "", tag: m.tag, renotify: !!m.tag, icon: "/icon-192.png", badge: "/badge.png", data: { url: m.url || "/" },
-  }));
+  })]));
 });
 
 self.addEventListener("notificationclick", e => {

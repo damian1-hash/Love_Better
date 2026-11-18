@@ -25,6 +25,8 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 
 **Me:** your name, partner linking, your sign-in key, notifications, and installing the app.
 
+**App icon badge and shortcuts:** once installed, the app icon shows a red number when your partner nudges you or answers the question for two. On Android, long-press the icon for shortcuts to Question for two, Send a nudge, Places for two and Heart Jump. True home-screen widgets need a native app.
+
 **Install and notifications:** the app installs to the home screen and works offline. It can send a morning reminder and a ping when your partner nudges you or answers the question.
 
 ## What's here

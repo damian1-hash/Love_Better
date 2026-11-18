@@ -111,7 +111,7 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
       case "POST /api/link/redeem": {
         const { code } = await readJson(req);
         const result = await pairing.redeemInvite(uid, code);
-        await notify(result.partnerId, { title: "You're linked 💞", body: (await nameOf(uid)) + " linked with you on Love Better.", url: "/#us", tag: "link" });
+        await notify(result.partnerId, { title: "You're linked 💞", body: (await nameOf(uid)) + " linked with you on Love Better.", url: "/#us", tag: "link", badge: true });
         return send(res, 200, result);
       }
       case "DELETE /api/link": {
@@ -136,8 +136,8 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
           const partner = partnerOf(couple, uid), name = await nameOf(uid);
           const s = await couples.summary(partner, couple, date);
           await notify(partner, s.question.mine
-            ? { title: "Both answers are in 💬", body: name + " answered today's question too. See what you both said.", url: "/#us", tag: "question" }
-            : { title: name + " answered today's question 💬", body: "Answer it too to see what they said.", url: "/#us", tag: "question" });
+            ? { title: "Both answers are in 💬", body: name + " answered today's question too. See what you both said.", url: "/#us", tag: "question", badge: true }
+            : { title: name + " answered today's question 💬", body: "Answer it too to see what they said.", url: "/#us", tag: "question", badge: true });
         }
         return send(res, 200, { ok: true });
       }
@@ -145,7 +145,7 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const couple = await coupleOf(uid), { kind } = await readJson(req);
         const { partner } = await couples.nudge(uid, couple, kind);
         const [verb, emoji] = NUDGE_TEXT[kind];
-        await notify(partner, { title: (await nameOf(uid)) + " " + verb + " " + emoji, body: "Open Love Better to send one back.", url: "/#us", tag: "nudge" });
+        await notify(partner, { title: (await nameOf(uid)) + " " + verb + " " + emoji, body: "Open Love Better to send one back.", url: "/#us", tag: "nudge", badge: true });
         return send(res, 200, { ok: true });
       }
       case "PUT /api/us/practice": {

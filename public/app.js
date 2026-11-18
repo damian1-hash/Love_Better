@@ -852,6 +852,7 @@ function renderAll() {
   else if (S.tab === "explore") renderExplore();
   if (S.tab === "today" && window.render) window.render();
   $("meDot").hidden = !(S.me && !linked() && !S.setup);
+  updateBadge();
   $("usDot").hidden = !(linked() && S.us && S.us.question.partnerAnswered && !S.us.question.mine);
 }
 document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender && !editing($("tab-" + S.tab))) { pendingRender = false; renderAll(); } }, 0));
@@ -870,6 +871,28 @@ setInterval(() => {
   else if (S.me && S.me.link && S.me.link.invite) loadMe();   // waiting for partner to use our code
 }, 15000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && S.online) loadMe(); });
+
+/* ---------------- app icon badge ---------------- */
+// The red number on the installed app's icon: things from your partner that
+// are waiting for you. Notifications bump it while the app is closed; opening
+// the app sets it to what's really still waiting.
+function waitingCount() {
+  if (!linked() || !S.us) return 0;
+  let n = 0;
+  if (S.us.question.partnerAnswered && !S.us.question.mine) n++;
+  const nd = S.us.nudge;
+  if (nd && nd.at > ls.get("lb-nudge-seen-badge", 0) && S.tab !== "us") n++;
+  return n;
+}
+async function updateBadge() {
+  if (S.tab === "us" && S.us && S.us.nudge) ls.set("lb-nudge-seen-badge", S.us.nudge.at);
+  const n = document.hidden ? null : waitingCount();
+  if (n == null) return;
+  try {
+    if (navigator.setAppBadge) { if (n) await navigator.setAppBadge(n); else await navigator.clearAppBadge(); }
+    const c = await caches.open("lb-badge"); await c.put("/badge-count", new Response(String(n)));
+  } catch (e) {}
+}
 
 /* ---------------- hooks for the original page script ---------------- */
 window.LB = {
