@@ -43,104 +43,108 @@ export class PairingService {
   }
 
   #requireUser(userId) {
-    if (typeof userId !== "string" || !userId.trim()) {
+    if (typeof userId !== "string" || !userId.trim() || userId.length > 100) {
       throw new PairingError("unauthenticated", "Missing user id.", 401);
     }
   }
 
-  #generateCode() {
+  async #generateCode() {
     for (let attempt = 0; attempt < 20; attempt++) {
       let code = "";
       for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
-      const existing = this.store.getInvite(code);
+      const existing = await this.store.getInvite(code);
       if (!existing || existing.expiresAt <= this.now()) return code;
     }
     throw new PairingError("code_space_exhausted", "Couldn't make a unique code. Try again.", 503);
   }
 
-  #activeInviteFor(userId) {
-    const invite = this.store.getInviteByOwner(userId);
+  async #activeInviteFor(userId) {
+    const invite = await this.store.getInviteByOwner(userId);
     if (!invite) return null;
     if (invite.expiresAt <= this.now()) {
-      this.store.deleteInvite(invite.code);
+      await this.store.deleteInvite(invite.code);
       return null;
     }
     return invite;
   }
 
-  #recentFailures(userId) {
+  async #recentFailures(userId) {
     const cutoff = this.now() - this.failureWindowMs;
-    const list = this.store.getFailures(userId).filter(t => t > cutoff);
-    this.store.setFailures(userId, list);
+    const all = await this.store.getFailures(userId);
+    const list = all.filter(t => t > cutoff);
+    if (list.length !== all.length) await this.store.setFailures(userId, list);
     return list;
   }
 
-  #fail(userId, error) {
-    this.store.setFailures(userId, [...this.#recentFailures(userId), this.now()]);
+  async #fail(userId, error) {
+    await this.store.setFailures(userId, [...(await this.#recentFailures(userId)), this.now()]);
     throw error;
   }
 
-  createInvite(userId) {
+  async createInvite(userId) {
     this.#requireUser(userId);
-    if (this.store.getCoupleForUser(userId)) {
+    if (await this.store.getCoupleForUser(userId)) {
       throw new PairingError("already_linked", "You're already linked with a partner.", 409);
     }
-    const old = this.#activeInviteFor(userId);
-    if (old) this.store.deleteInvite(old.code);
+    const old = await this.#activeInviteFor(userId);
+    if (old) await this.store.deleteInvite(old.code);
 
     const createdAt = this.now();
-    const invite = { code: this.#generateCode(), ownerId: userId, createdAt, expiresAt: createdAt + this.ttlMs };
-    this.store.saveInvite(invite);
+    const invite = { code: await this.#generateCode(), ownerId: userId, createdAt, expiresAt: createdAt + this.ttlMs };
+    await this.store.saveInvite(invite);
     return { code: invite.code, display: formatCode(invite.code), expiresAt: invite.expiresAt };
   }
 
-  cancelInvite(userId) {
+  async cancelInvite(userId) {
     this.#requireUser(userId);
-    const invite = this.#activeInviteFor(userId);
-    if (invite) this.store.deleteInvite(invite.code);
+    const invite = await this.#activeInviteFor(userId);
+    if (invite) await this.store.deleteInvite(invite.code);
     return { cancelled: !!invite };
   }
 
-  redeemInvite(userId, rawCode) {
+  async redeemInvite(userId, rawCode) {
     this.#requireUser(userId);
-    if (this.#recentFailures(userId).length >= this.maxFailures) {
+    if ((await this.#recentFailures(userId)).length >= this.maxFailures) {
       throw new PairingError("too_many_attempts", "Too many wrong codes. Wait a few minutes and try again.", 429);
     }
-    if (this.store.getCoupleForUser(userId)) {
+    if (await this.store.getCoupleForUser(userId)) {
       throw new PairingError("already_linked", "You're already linked with a partner.", 409);
     }
     const code = normalizeCode(rawCode);
     if (code.length !== CODE_LENGTH || [...code].some(c => !CODE_ALPHABET.includes(c))) {
-      this.#fail(userId, new PairingError("invalid_code", "That doesn't look like a valid code."));
+      await this.#fail(userId, new PairingError("invalid_code", "That doesn't look like a valid code."));
     }
-    const invite = this.store.getInvite(code);
-    if (!invite) this.#fail(userId, new PairingError("invalid_code", "That code wasn't found.", 404));
+    const invite = await this.store.getInvite(code);
+    if (!invite) await this.#fail(userId, new PairingError("invalid_code", "That code wasn't found.", 404));
     if (invite.expiresAt <= this.now()) {
-      this.store.deleteInvite(code);
-      this.#fail(userId, new PairingError("expired_code", "That code has expired. Ask for a new one.", 410));
+      await this.store.deleteInvite(code);
+      await this.#fail(userId, new PairingError("expired_code", "That code has expired. Ask for a new one.", 410));
     }
     if (invite.ownerId === userId) {
       throw new PairingError("own_code", "That's your own code. Send it to your partner instead.");
     }
-    if (this.store.getCoupleForUser(invite.ownerId)) {
-      this.store.deleteInvite(code);
+    if (await this.store.getCoupleForUser(invite.ownerId)) {
+      await this.store.deleteInvite(code);
       throw new PairingError("partner_already_linked", "That person is already linked with someone.", 409);
     }
 
-    // Single-use: remove the code, plus any code the redeemer had out.
-    this.store.deleteInvite(code);
-    const mine = this.store.getInviteByOwner(userId);
-    if (mine) this.store.deleteInvite(mine.code);
-    this.store.setFailures(userId, []);
-
+    // Single-use: claim the code atomically so two people can't both use it.
+    if (!(await this.store.takeInvite(code))) {
+      await this.#fail(userId, new PairingError("invalid_code", "That code wasn't found.", 404));
+    }
     const couple = { id: randomUUID(), members: [invite.ownerId, userId], createdAt: this.now() };
-    this.store.saveCouple(couple);
+    if (!(await this.store.saveCouple(couple))) {
+      throw new PairingError("partner_already_linked", "One of you just linked with someone else.", 409);
+    }
+    const mine = await this.store.getInviteByOwner(userId);
+    if (mine) await this.store.deleteInvite(mine.code);
+    await this.store.setFailures(userId, []);
     return { coupleId: couple.id, partnerId: invite.ownerId, linkedAt: couple.createdAt };
   }
 
-  status(userId) {
+  async status(userId) {
     this.#requireUser(userId);
-    const couple = this.store.getCoupleForUser(userId);
+    const couple = await this.store.getCoupleForUser(userId);
     if (couple) {
       return {
         linked: true,
@@ -149,18 +153,18 @@ export class PairingService {
         linkedAt: couple.createdAt,
       };
     }
-    const invite = this.#activeInviteFor(userId);
+    const invite = await this.#activeInviteFor(userId);
     return {
       linked: false,
       invite: invite ? { code: invite.code, display: formatCode(invite.code), expiresAt: invite.expiresAt } : null,
     };
   }
 
-  unlink(userId) {
+  async unlink(userId) {
     this.#requireUser(userId);
-    const couple = this.store.getCoupleForUser(userId);
+    const couple = await this.store.getCoupleForUser(userId);
     if (!couple) throw new PairingError("not_linked", "You're not linked with anyone.", 409);
-    this.store.deleteCouple(couple.id);
+    await this.store.deleteCouple(couple.id);
     return { unlinked: true, coupleId: couple.id };
   }
 }

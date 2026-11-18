@@ -499,7 +499,7 @@ function gRender() {
   pad.classList.toggle("theirs", !!(pp && pp.hold));
   pad.classList.toggle("charging", !!(pp && pp.hold && my.hold));
   let label = "", prompt = "", status;
-  if (G.ready && !G.room) status = LINK.api ? "Link with your partner first. Close this and use the Link with your partner card." : "Heart Jump can't connect from here. You both need to be signed in and have this page shared with you.";
+  if (G.ready && !G.room) status = LINK.setup ? LINK.setup : LINK.api ? "Link with your partner first. Close this and use the Link with your partner card." : "Heart Jump can't connect from here. You both need to be signed in and have this page shared with you.";
   else if (!G.ready) status = "Connecting…";
   else if (!p) { status = "Waiting for your partner. Share this page with them and ask them to open Heart Jump."; label = "How it works"; prompt = "One heart. Two phones. It only jumps when you both hold on."; }
   else if (my.has) {
@@ -532,13 +532,14 @@ if (!LINK.uid) { LINK.uid = (crypto.randomUUID ? crypto.randomUUID() : String(Ma
 async function api(method, path, body) {
   const res = await fetch(path, { method, headers: { "Content-Type": "application/json", "X-User-Id": LINK.uid }, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || "Something went wrong.");
+  if (!res.ok) { const err = new Error(data.message || "Something went wrong."); err.code = data.error; throw err; }
   return data;
 }
 function linkMsg(text, err) { const m = $("linkMsg"); m.textContent = text || ""; m.classList.toggle("err", !!err); }
 function renderLink() {
   const st = LINK.status;
   $("linkCard").hidden = !LINK.api;
+  if (LINK.setup) { $("linkOff").hidden = true; $("linkOn").hidden = true; linkMsg(LINK.setup, true); return; }
   if (!st) return;
   $("linkOff").hidden = st.linked; $("linkOn").hidden = !st.linked;
   const inv = !st.linked && st.invite;
@@ -550,8 +551,11 @@ function renderLink() {
   }
 }
 async function refreshLink() {
-  try { LINK.status = await api("GET", "/api/link"); LINK.api = true; }
-  catch (e) { if (!LINK.api) return renderLink(); }
+  try { LINK.status = await api("GET", "/api/link"); LINK.api = true; LINK.setup = null; }
+  catch (e) {
+    if (e.code === "setup_required") { LINK.api = true; LINK.setup = e.message; LINK.status = null; }
+    if (!LINK.api || LINK.setup) return renderLink();
+  }
   const was = refreshLink.linked; refreshLink.linked = LINK.status.linked;
   if (was === false && LINK.status.linked) linkMsg("Linked! Open Heart Jump together.");
   renderLink();
@@ -582,19 +586,44 @@ setInterval(() => { if (LINK.api && LINK.status && !LINK.status.linked && LINK.s
 refreshLink();
 
 // A private live room for the linked couple, with the same shape as the claude.ai room.
+// It checks in a few times a second, which works on serverless hosts like Vercel.
 function coupleRoom() {
-  const peerId = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
-  let list = [], cbs = [], deads = [];
-  const es = new EventSource("/api/room/events?uid=" + encodeURIComponent(LINK.uid) + "&peer=" + peerId);
-  es.onmessage = e => {
-    list = JSON.parse(e.data).map(p => ({ peer: p.peer, sameTab: p.peer === peerId, kind: "viewer", presence: p.presence }));
-    cbs.forEach(f => f());
-  };
-  es.onerror = () => { if (es.readyState === 2) deads.forEach(f => f()); };
+  const peerId = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
+  let list = [], cbs = [], deads = [], misses = 0, timer = null, polling = false;
+  let full = {}, sending = null, dirty = false;
+  async function poll() {
+    timer = null; polling = true;
+    try {
+      const data = await api("GET", "/api/room?peer=" + peerId);
+      misses = 0;
+      list = data.peers.map(p => ({ peer: p.peer, sameTab: p.peer === peerId, kind: "viewer",
+        presence: p.peer === peerId ? Object.assign({}, full) : p.presence }));
+      cbs.forEach(f => f());
+    } catch (e) {
+      if (++misses >= 5) { polling = false; deads.forEach(f => f()); return; }
+    }
+    polling = false;
+    if (document.documentElement.classList.contains("playing")) timer = setTimeout(poll, document.hidden ? 3000 : 600);
+  }
+  // One update in flight at a time, always carrying the latest full state.
+  function flush() {
+    if (sending) { dirty = true; return sending; }
+    dirty = false;
+    sending = api("POST", "/api/room/presence", { peer: peerId, presence: full })
+      .catch(() => {})
+      .then(() => { sending = null; if (dirty) return flush(); });
+    return sending;
+  }
   return {
-    presence: patch => api("POST", "/api/room/presence", { peer: peerId, patch }),
+    presence(patch) {
+      Object.assign(full, patch);
+      const self = list.find(p => p.sameTab);
+      if (self) self.presence = Object.assign({}, full);
+      return flush();
+    },
     peers: () => list,
-    onPeers: (cb, dead) => { cbs.push(cb); if (dead) deads.push(dead); },
+    onPeers(cb, dead) { cbs.push(cb); if (dead) deads.push(dead); this.resume(); },
+    resume() { if (!timer && !polling) poll(); },
   };
 }
 
@@ -616,7 +645,7 @@ function route() {
   if (G.ready && !G.room) { connecting = false; G.ready = false; }
   const on = location.hash === "#heart-jump";
   document.documentElement.classList.toggle("playing", on);
-  if (on) { connect(); gRender(); } else hold(false);
+  if (on) { connect(); if (G.room && G.room.resume) G.room.resume(); gRender(); } else hold(false);
 }
 $("play").onclick = () => { location.hash = "heart-jump"; route(); };
 $("gClose").onclick = () => { location.hash = ""; route(); };
