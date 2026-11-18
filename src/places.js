@@ -69,7 +69,8 @@ export function parseGeoapify(cat, data, lat, lon) {
       cat,
       lat: Number(p.lat.toFixed(6)), lon: Number(p.lon.toFixed(6)),
       distance: distanceM(lat, lon, p.lat, p.lon),
-      address: str(p.address_line2),
+      // "36 Adeola Odeku Street, Victoria Island 101241, Lagos State, Nigeria" → "36 Adeola Odeku Street, Victoria Island"
+      address: str(p.address_line2) ? str(p.address_line2).split(",").slice(0, 2).map(x => x.trim().replace(/\s+\d{4,6}$/, "").replace(/^\d{4}\s+/, "")).filter(Boolean).join(", ") : null,
       cuisine: cuisine ? String(cuisine).split(/[;,]/).map(s => s.trim().replace(/_/g, " ")).filter(Boolean).slice(0, 3).join(", ") : null,
       hours,
       website: website && /^https?:\/\//i.test(website) ? website : website ? "https://" + website : null,
