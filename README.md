@@ -19,7 +19,7 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 - **Dates to remember:** birthdays, anniversaries and trips, with countdowns. They can repeat every year.
 - **Date ideas:** a shared list you both add to and tick off, with suggestions and a "Surprise me" button.
 
-**Explore:** romantic and fun places near you, or near any town you search for. Pick a kind of place (romantic dinner, cafés & sweets, drinks, outdoors, culture, fun & games) and a distance (1–10 km). Each place shows its distance, walking time, cuisine, opening hours and outdoor seating, plus buttons for directions and its website. **Pick for us** chooses one for you, and **Save for a date** adds a place to your shared date ideas. Place data comes from OpenStreetMap, which is free and needs no API key.
+**Explore:** romantic and fun places near you, or near any town you search for. Pick a kind of place (romantic dinner, cafés & sweets, drinks, outdoors, culture, fun & games) and a distance (1–10 km). Each place shows its distance, walking time, cuisine, opening hours and outdoor seating, plus buttons for directions and its website. **Pick for us** chooses one for you, and **Save for a date** adds a place to your shared date ideas. Places come from **Geoapify** (fast, built on OpenStreetMap data). Without a Geoapify key, the phone asks OpenStreetMap's free servers directly instead, which works but can be slow.
 
 **Play:** Heart Jump, the two-phone game, and the love-language quiz.
 
@@ -41,7 +41,8 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 | `src/pairing.js` | Linking with invite codes |
 | `src/couple.js` | Everything a couple shares |
 | `src/push.js` | Web Push notifications (no dependencies) |
-| `src/places.js` | Nearby places (OpenStreetMap Overpass) and place search (Nominatim), cached |
+| `src/places.js` | Nearby places from Geoapify, and place search (Nominatim), cached |
+| `public/places-core.js` | Place categories and the OpenStreetMap fallback, shared by phone and server |
 | `src/store.js`, `src/kv.js` | Storage: Upstash Redis on Vercel, in-memory locally |
 | `src/server.js` | Local server for `npm start` |
 | `api/index.js` | The single Vercel function |
@@ -62,7 +63,8 @@ Needs Node 18+. There are no dependencies to install. Locally, data is kept in m
 1. **Database (required).** In the Vercel project, open **Storage** (or **Marketplace**), add **Upstash for Redis**, and connect it to this project. This sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`.
 2. **Notifications (optional).** Run `npm run vapid` on your computer and add the two printed values as environment variables: `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`. Optionally also set `VAPID_SUBJECT` to `mailto:you@example.com` or your site's URL.
 3. **Morning reminder (optional, needs step 2).** Add a `CRON_SECRET` environment variable set to any long random string. Vercel then calls `/api/cron/daily` every day at 07:00 UTC. To change the time, edit `crons` in `vercel.json`. On the Hobby plan, Vercel runs it once a day, sometime within that hour.
-4. **Redeploy** so the variables take effect.
+4. **Fast place search (recommended).** Create a free account at [geoapify.com](https://www.geoapify.com/), create a project, copy its API key, and add it as `GEOAPIFY_API_KEY`. The free plan covers 3,000 requests a day, and results are cached per area for a day. The key stays on the server.
+5. **Redeploy** so the variables take effect.
 
 Without a database, the page still works and the Me tab explains what's missing. Without VAPID keys, everything works except notifications.
 
@@ -70,7 +72,7 @@ Without a database, the page still works and the Me tab explains what's missing.
 
 ## Places and privacy
 
-The phone rounds its location to about 100 m before sending it, and the server caches results for each area (about 1 km) for a day. That keeps searches fast and stays within OpenStreetMap's fair-use rules. Each person can run up to 30 new searches a minute. Map data © OpenStreetMap contributors (ODbL); the page shows this credit.
+The phone rounds its location to about 100 m before sending it. The server caches results for each area (about 1 km) for a day, and the phone keeps its last 8 searches for a day. That keeps searches fast and the free quota safe. Each person can run up to 30 new searches a minute. The page credits Geoapify and OpenStreetMap contributors (ODbL), as their terms require.
 
 ## Accounts and sign-in
 

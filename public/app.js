@@ -559,9 +559,9 @@ function locate() {
     err => { X.locating = false; X.err = err.code === 1 ? "Location is blocked. Allow it in your browser settings, or search for a place instead." : "Couldn't find your location. Try again or search instead."; renderExplore(); },
     { enableHighAccuracy: false, timeout: 15000, maximumAge: 5 * 60000 });
 }
-// Places: the phone asks OpenStreetMap directly (shared map servers often
-// turn away requests from cloud hosts like Vercel), keeps answers for a day,
-// and only falls back to our server if every map server fails.
+// Places: our server asks Geoapify (fast). If that isn't set up or fails,
+// the phone asks OpenStreetMap's free Overpass servers itself (slower).
+// Answers are kept on the phone for a day.
 let placesCore = null;
 const PLACE_CACHE_MS = 24 * 3600 * 1000;
 function cachedPlaces(k) {
@@ -570,7 +570,7 @@ function cachedPlaces(k) {
 }
 function cachePlaces(k, places) {
   const c = ls.get("lb-places-cache", {});
-  c[k] = { at: Date.now(), places };
+  c[k] = { at: Date.now(), places, source: X.source };
   const keys = Object.keys(c).sort((a, b) => c[b].at - c[a].at);
   for (const old of keys.slice(8)) delete c[old];   // keep the 8 most recent searches
   ls.set("lb-places-cache", c);
@@ -578,14 +578,19 @@ function cachePlaces(k, places) {
 async function findPlaces(where, cat, radius) {
   const k = [cat, radius, where.lat, where.lon].join("|");
   const hit = cachedPlaces(k);
-  if (hit) return hit;
-  let places = null, directErr = null;
+  if (hit) { X.source = (ls.get("lb-places-cache", {})[k] || {}).source || "osm"; return hit; }
+  let places = null, source = "geoapify";
   try {
+    places = (await api("GET", "/api/places?lat=" + where.lat + "&lon=" + where.lon + "&radius=" + radius + "&cat=" + cat)).places;
+  } catch (e) {
+    if (e.code !== "places_not_configured" && e.code !== "places_unavailable") throw e;
+    console.warn("Server place search unavailable (" + e.code + "), asking OpenStreetMap directly");
     placesCore = placesCore || await import("./places-core.js");
     const { data } = await placesCore.fetchOverpass(placesCore.buildQuery(cat, where.lat, where.lon, radius), { stagger: 3500, timeout: 15000 });
     places = placesCore.parsePlaces(cat, data, where.lat, where.lon).filter(p => p.distance <= radius);
-  } catch (e) { directErr = e; console.warn("Direct map lookup failed:", e.errors || e.message); }
-  if (!places) places = (await api("GET", "/api/places?lat=" + where.lat + "&lon=" + where.lon + "&radius=" + radius + "&cat=" + cat)).places;
+    source = "osm";
+  }
+  X.source = source;
   cachePlaces(k, places);
   return places;
 }
@@ -600,7 +605,7 @@ async function loadPlaces() {
   } catch (e) {
     if (ticket !== X.ticket) return;
     X.places = null;
-    X.err = e.code === "places_unavailable" ? "The map servers are busy right now. Try again in a minute." : e.message;
+    X.err = e.errors ? "The map servers are busy right now. Try again in a minute." : e.message;
   }
   X.loading = false; renderExplore();
 }
@@ -625,6 +630,7 @@ async function addPlaceIdea(p) {
 function placeCard(p) {
   const meta = [h("span", {}, h("b", { text: fmtDist(p.distance) }), p.distance <= 3000 ? " · " + walkMin(p.distance) + " min walk" : null), h("span", { text: p.kind })];
   if (p.cuisine) meta.push(h("span", { text: p.cuisine }));
+  if (p.address) meta.push(h("span", { text: p.address }));
   if (p.outdoor) meta.push(h("span", { text: "☀️ Outdoor seating" }));
   return h("article", { class: "place" + (X.pick === p.id ? " pick" : ""), id: "place-" + p.id },
     X.pick === p.id ? h("span", { class: "eyebrow", style: "color:var(--accent)", text: "🎲 Tonight's pick" }) : null,
@@ -680,7 +686,9 @@ function renderExplore() {
   const list = [...X.places];
   if (X.pick) list.sort((a, b) => (b.id === X.pick) - (a.id === X.pick));
   tab.append(h("div", { class: "places" }, list.map(placeCard)));
-  tab.append(h("p", { class: "osm" }, "Places from ", h("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener", text: "© OpenStreetMap contributors" }), ". Check opening hours before you go."));
+  tab.append(h("p", { class: "osm" },
+    X.source === "geoapify" ? h("span", {}, h("a", { href: "https://www.geoapify.com/", target: "_blank", rel: "noopener", text: "Powered by Geoapify" }), " · ") : "Places from ",
+    h("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener", text: "© OpenStreetMap contributors" }), ". Check opening hours before you go."));
 }
 
 /* ---------------- Play tab: quiz ---------------- */

@@ -36,7 +36,7 @@ function kindOf(tags) {
 }
 
 // Little touches that make a place more date-worthy float up the list.
-function charm(tags) {
+export function charm(tags) {
   let s = 0;
   if (tags.outdoor_seating === "yes") s += 1;
   if (tags.website || tags["contact:website"]) s += 1;
