@@ -250,7 +250,7 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
     } catch (err) {
       if (err instanceof PairingError) return send(res, err.status, { error: err.code, message: err.message, ...(err.detail ? { detail: err.detail } : {}) });
       console.error(err);
-      send(res, 500, { error: "server_error", message: "Something went wrong. Try again." });
+      send(res, 500, { error: "server_error", message: "Something went wrong. Try again.", detail: String(err && err.message || err).slice(0, 200) });
     }
   };
 }
