@@ -58,11 +58,17 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
   const partnerOf = (couple, uid) => couple.members.find(m => m !== uid);
   const nameOf = async uid => (await couples.getProfile(uid)).name || "Your partner";
 
-  // Never let a slow push service hold up the response for long.
-  const notify = (uid, msg) => Promise.race([
-    pushes.sendTo(uid, msg).catch(e => console.error(e)),
-    new Promise(r => setTimeout(r, 3000)),
-  ]);
+  // Run work after the reply has gone out. On Vercel, waitUntil keeps the
+  // function alive until the work finishes, so nobody waits for it. Where
+  // that isn't available, wait at most 3 seconds so a slow push service never
+  // holds up the reply for long.
+  function later(work) {
+    const p = Promise.resolve().then(work).catch(e => console.error(e));
+    const ctx = globalThis[Symbol.for("@vercel/request-context")]?.get?.();
+    if (ctx && typeof ctx.waitUntil === "function") { ctx.waitUntil(p); return Promise.resolve(); }
+    return Promise.race([p, new Promise(r => setTimeout(r, 3000))]);
+  }
+  const notify = (uid, msg) => later(() => pushes.sendTo(uid, msg));
 
   function checkPeer(peer) {
     if (typeof peer !== "string" || !/^[\w-]{1,64}$/.test(peer)) throw new PairingError("bad_peer", "Missing or invalid peer id.");
@@ -169,10 +175,19 @@ export function createHandler({ store = createStore(), pairingOptions, requireSt
         const msg = await chat.send(uid, couple, body);
         const preview = msg.text ? (msg.text.length > 120 ? msg.text.slice(0, 117) + "…" : msg.text)
           : msg.file.kind === "image" ? "📷 Photo" : msg.file.kind === "video" ? "🎥 Video" : "📎 " + msg.file.name;
-        await notify(partnerOf(couple, uid), { title: (await nameOf(uid)) + " 💬", body: preview, url: "/#chat", tag: "chat", badge: true });
+        // The partner's notification goes out after the reply, so sending feels instant.
+        await later(async () => pushes.sendTo(partnerOf(couple, uid), { title: (await nameOf(uid)) + " 💬", body: preview, url: "/#chat", tag: "chat", badge: true }));
         return send(res, 201, msg);
       }
-      case "DELETE /api/chat": return send(res, 200, await chat.unsend(uid, await coupleOf(uid), q.get("seq")));
+      // Delete for everyone (default), or ?for=me to hide it on your side only.
+      case "DELETE /api/chat": {
+        const couple = await coupleOf(uid);
+        return send(res, 200, q.get("for") === "me" ? await chat.hide(uid, couple, q.get("seq")) : await chat.unsend(uid, couple, q.get("seq")));
+      }
+      case "PATCH /api/chat": {
+        const couple = await coupleOf(uid), { seq, text } = await readJson(req);
+        return send(res, 200, await chat.edit(uid, couple, seq, text));
+      }
       case "POST /api/chat/read": {
         const couple = await coupleOf(uid), { seq } = await readJson(req);
         return send(res, 200, await chat.read(uid, couple, seq));

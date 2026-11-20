@@ -26,7 +26,7 @@ Love Better Daily is a page-a-day reminder for loving people better, plus a set 
 - **Dates to remember:** birthdays, anniversaries and trips, with countdowns. They can repeat every year.
 - **Date ideas:** a shared list you both add to and tick off, with suggestions and a "Surprise me" button.
 
-**Chat** (after linking): a private chat for the two of you. The **＋** button takes a photo with the **camera**, picks **photos and videos** from your library, or attaches any **file**. Photos are shrunk on the phone; videos and files can be up to 3 MB. It shows "Seen" receipts, lets you **unsend** your own messages (tap one), sends notifications, and adds unread messages to the app icon badge. The newest 1,000 messages are kept. Only photos and videos display inside the app; every other file is a plain download, so an uploaded file can never run code in the app.
+**Chat** (after linking): a private chat for the two of you. The **＋** button takes a photo with the **camera**, picks **photos and videos** from your library, or attaches any **file**. Photos are shrunk on the phone; videos and files can be up to 3 MB. It shows "Seen" receipts. **Swipe a message right to reply** to it (the reply quotes it; tap the quote to jump back). Tap a message, or press and hold a photo, for **Reply**, **Edit** (your own messages, marked "Edited"), **Copy text**, **Delete for me** (hidden only on your side) and **Delete for everyone** (your own messages). It sends notifications, and adds unread messages to the app icon badge. The newest 1,000 messages are kept. Only photos and videos display inside the app; every other file is a plain download, so an uploaded file can never run code in the app.
 
 **Explore:** romantic and fun places near you, or near any town you search for. Pick a kind of place (romantic dinner, cafés & sweets, drinks, outdoors, culture, fun & games) and a distance (1–10 km). Each place shows its distance, walking time, cuisine, opening hours and outdoor seating, plus buttons for directions and its website. **Pick for us** chooses one for you, and **Save for a date** adds a place to your shared date ideas. Places come from **Geoapify** (fast, built on OpenStreetMap data). Without a Geoapify key, the phone asks OpenStreetMap's free servers directly instead, which works but can be slow.
 
@@ -136,8 +136,10 @@ Every request (except `/api/push/key` and the cron) sends `Authorization: Bearer
 | `GET /api/places` | `?lat=&lon=&radius=1000\|2000\|5000\|10000&cat=dinner\|cafe\|drinks\|outdoors\|culture\|fun` | Places nearby |
 | `GET /api/places/search` | `?q=` | Find a town or area |
 | `GET /api/chat` | `?after=N` or `?before=N` | Messages (newest 50, after #N, or 50 before #N), plus read receipts |
-| `POST /api/chat` | `{ text, file: { name, type, data (base64), w, h } }` | Send a message (file ≤ 3 MB) |
-| `DELETE /api/chat?seq=` | | Unsend your message |
+| `POST /api/chat` | `{ text, file: { name, type, data (base64), w, h }, replyTo }` | Send a message (file ≤ 3 MB), optionally replying to message #`replyTo` |
+| `PATCH /api/chat` | `{ seq, text }` | Edit your own message |
+| `DELETE /api/chat?seq=` | | Delete your message for everyone |
+| `DELETE /api/chat?for=me&seq=` | | Delete any message for yourself only |
 | `POST /api/chat/read` | `{ seq }` | Mark messages read |
 | `GET /api/chat/file?id=` | | An attachment (needs your key) |
 | `GET /api/push/key` | | Public key for notifications |

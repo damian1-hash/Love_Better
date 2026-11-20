@@ -40,30 +40,43 @@ export class ChatService {
 
   // Newest messages (default), messages after #after, or 50 before #before.
   async list(uid, couple, { after, before } = {}) {
-    const C = couple.id, st = await this.status(uid, couple), last = st.last;
+    const C = couple.id;
+    const [st, hidden] = await Promise.all([this.status(uid, couple), this.kv.hgetall(this.#k(C, "chathide", uid))]);
+    const last = st.last;
     let from, to;
     if (after != null && after !== "") { from = Number(after) + 1; to = Math.min(last, from + 199); }
     else { to = before ? Math.min(last, Number(before) - 1) : last; from = Math.max(1, to - 49); }
-    const messages = await this.#get(C, Math.max(from, last - KEEP + 1, 1), to);
+    // Messages you deleted for yourself are left out; your partner still sees them.
+    const messages = (await this.#get(C, Math.max(from, last - KEEP + 1, 1), to)).filter(m => !hidden[m.seq]);
     return { ...st, messages, hasOlder: from > Math.max(1, last - KEEP + 1) };
   }
 
-  async send(uid, couple, { text, file }) {
+  async send(uid, couple, { text, file, replyTo }) {
     const C = couple.id;
     const body = String(text ?? "").trim();
     if (body.length > 4000) throw new PairingError("too_long", "That message is too long.");
+    const reply = replyTo != null && replyTo !== "" ? await this.#quote(C, replyTo) : null;
     let att = null;
     if (file) att = await this.#saveFile(uid, C, file);
     if (!body && !att) throw new PairingError("empty", "Write something or attach a file.");
     const seq = await this.kv.incr(this.#k(C, "chatseq"));
     const msg = { seq, id: randomUUID(), from: uid, text: body, file: att, at: this.now() };
-    await this.kv.set(this.#k(C, "msg", seq), JSON.stringify(msg));
-    // "last" only moves forward, even if two messages are sent at the same moment.
+    if (reply) msg.reply = reply;
+    // These writes don't depend on each other, so do them at the same time:
+    // each database call is a network round trip, and they add up.
+    await Promise.all([
+      this.kv.set(this.#k(C, "msg", seq), JSON.stringify(msg)),
+      this.#bumpLast(C, seq),
+      this.read(uid, couple, seq),
+      seq > KEEP ? this.#drop(C, seq - KEEP) : null,
+    ]);
+    return msg;
+  }
+
+  // "last" only moves forward, even if two messages are sent at the same moment.
+  async #bumpLast(C, seq) {
     const cur = Number(await this.kv.get(this.#k(C, "chatlast"))) || 0;
     if (seq > cur) await this.kv.set(this.#k(C, "chatlast"), seq);
-    await this.read(uid, couple, seq);
-    if (seq > KEEP) await this.#drop(C, seq - KEEP);
-    return msg;
   }
 
   async #saveFile(uid, C, { name, type, data, w, h }) {
@@ -75,10 +88,14 @@ export class ChatService {
     if (!/^[\w.+-]+\/[\w.+-]+$/.test(type)) type = "application/octet-stream";
     const kind = type.startsWith("image/") && INLINE_TYPES.includes(type) ? "image" : type.startsWith("video/") && INLINE_TYPES.includes(type) ? "video" : "file";
     const id = randomUUID(), chunks = Math.ceil(bytes.length / CHUNK);
-    for (let i = 0; i < chunks; i++) await this.kv.set(this.#k(C, "file", id, i), bytes.subarray(i * CHUNK, (i + 1) * CHUNK).toString("base64"));
     const meta = { id, from: uid, name: String(name || "file").replace(/[\\/\r\n"]/g, "_").slice(0, 120), type, size: bytes.length, kind, chunks,
       w: Math.min(10000, Number(w) || 0), h: Math.min(10000, Number(h) || 0) };
-    await this.kv.set(this.#k(C, "file", id), JSON.stringify(meta));
+    // Nobody knows the file id until the message is saved, so the pieces and
+    // the file details can all be written at once.
+    await Promise.all([
+      ...Array.from({ length: chunks }, (_, i) => this.kv.set(this.#k(C, "file", id, i), bytes.subarray(i * CHUNK, (i + 1) * CHUNK).toString("base64"))),
+      this.kv.set(this.#k(C, "file", id), JSON.stringify(meta)),
+    ]);
     return { id, name: meta.name, type, size: meta.size, kind, w: meta.w, h: meta.h };
   }
 
@@ -101,6 +118,40 @@ export class ChatService {
     await this.kv.del(this.#k(C, "msg", seq));
   }
 
+  // A short copy of the message being replied to, so the reply still makes
+  // sense when the original is far up the chat.
+  async #quote(C, seq) {
+    seq = Number(seq);
+    const m = Number.isInteger(seq) && seq > 0 ? J(await this.kv.get(this.#k(C, "msg", seq))) : null;
+    if (!m || m.deleted) throw new PairingError("not_found", "The message you're replying to is gone.", 404);
+    const text = m.text ? (m.text.length > 140 ? m.text.slice(0, 139) + "…" : m.text) : "";
+    return { seq: m.seq, from: m.from, text, kind: m.file ? m.file.kind : null, name: m.file && m.file.kind === "file" ? m.file.name : undefined };
+  }
+
+  // Change the words of one of your own messages.
+  async edit(uid, couple, seq, text) {
+    const C = couple.id, k = this.#k(C, "msg", Number(seq)), m = J(await this.kv.get(k));
+    if (!m || m.deleted) throw new PairingError("not_found", "That message is gone.", 404);
+    if (m.from !== uid) throw new PairingError("forbidden", "You can only edit your own messages.", 403);
+    const body = String(text ?? "").trim();
+    if (body.length > 4000) throw new PairingError("too_long", "That message is too long.");
+    if (!body && !m.file) throw new PairingError("empty", "A message can't be empty. Delete it instead.");
+    if (body === m.text) return m;
+    const out = { ...m, text: body, edited: this.now() };
+    await this.kv.set(k, JSON.stringify(out));
+    await this.kv.incr(this.#k(C, "chatedit"));
+    return out;
+  }
+
+  // Delete for me: hide a message on your own phones only.
+  async hide(uid, couple, seq) {
+    seq = Number(seq);
+    if (!Number.isInteger(seq) || seq < 1) throw new PairingError("bad_seq", "Invalid message number.");
+    await this.kv.hset(this.#k(couple.id, "chathide", uid), String(seq), 1);
+    return { hidden: true };
+  }
+
+  // Delete for everyone: only for your own messages.
   async unsend(uid, couple, seq) {
     const C = couple.id, k = this.#k(C, "msg", Number(seq)), m = J(await this.kv.get(k));
     if (!m) throw new PairingError("not_found", "That message is gone.", 404);
@@ -122,6 +173,7 @@ export class ChatService {
   async deleteAll(couple) {
     const C = couple.id, last = Number(await this.kv.get(this.#k(C, "chatlast"))) || 0;
     for (let i = Math.max(1, last - KEEP + 1); i <= last; i++) await this.#drop(C, i);
-    await this.kv.del(this.#k(C, "chatseq"), this.#k(C, "chatlast"), this.#k(C, "chatread"), this.#k(C, "chatedit"));
+    await this.kv.del(this.#k(C, "chatseq"), this.#k(C, "chatlast"), this.#k(C, "chatread"), this.#k(C, "chatedit"),
+      ...couple.members.map(m => this.#k(C, "chathide", m)));
   }
 }

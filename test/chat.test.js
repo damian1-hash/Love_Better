@@ -80,6 +80,30 @@ for (const [name, make] of Object.entries({
         assert.equal(gone.deleted, true); assert.equal(gone.text, undefined);
         assert.equal((await fetch(base + "/api/chat/file?id=" + doc.file.id, { headers: { Authorization: "Bearer " + B } })).status, 404);
 
+        // reply: carries a short copy of the original
+        const rep = (await call(B, "POST", "/api/chat", { text: "Yes!", replyTo: m1.seq })).body;
+        assert.deepEqual([rep.reply.seq, rep.reply.from, rep.reply.text], [1, m1.from, "Hi love"]);
+        const repPhoto = (await call(A, "POST", "/api/chat", { text: "Love it", replyTo: ph.seq })).body;
+        assert.equal(repPhoto.reply.kind, "image");
+        assert.equal((await call(A, "POST", "/api/chat", { text: "x", replyTo: doc.seq })).status, 404, "can't reply to an unsent message");
+        assert.equal((await call(A, "POST", "/api/chat", { text: "x", replyTo: 9999 })).status, 404);
+
+        // edit: only your own, never empty, partner's phone refreshes
+        assert.equal((await call(A, "PATCH", "/api/chat", { seq: rep.seq, text: "hack" })).status, 403);
+        assert.equal((await call(B, "PATCH", "/api/chat", { seq: rep.seq, text: "  " })).status, 400);
+        const ed = (await call(B, "PATCH", "/api/chat", { seq: rep.seq, text: "Yes, always!" })).body;
+        assert.equal(ed.text, "Yes, always!"); assert.ok(ed.edited); assert.equal(ed.reply.seq, 1, "reply kept");
+        r = (await call(A, "GET", "/api/chat")).body;
+        assert.equal(r.edit, 2);
+        assert.equal(r.messages.find(m => m.seq === rep.seq).text, "Yes, always!");
+        assert.equal((await call(A, "PATCH", "/api/chat", { seq: doc.seq, text: "back" })).status, 404, "can't edit an unsent message");
+
+        // delete for me: gone for me, still there for my partner, works on their messages too
+        await call(A, "DELETE", "/api/chat?for=me&seq=" + rep.seq);
+        assert.ok(!(await call(A, "GET", "/api/chat")).body.messages.some(m => m.seq === rep.seq));
+        assert.ok((await call(B, "GET", "/api/chat")).body.messages.some(m => m.seq === rep.seq && !m.deleted));
+        assert.equal((await call(A, "DELETE", "/api/chat?for=me&seq=abc")).status, 400);
+
         // unlinking deletes the chat
         await call(A, "DELETE", "/api/link");
         const inv2 = await call(A, "POST", "/api/link/invite"); await call(B, "POST", "/api/link/redeem", { code: inv2.body.code });

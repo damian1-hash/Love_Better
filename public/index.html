@@ -333,21 +333,43 @@ select.field { appearance: none; background-image: linear-gradient(45deg, transp
 .bubble.gone { font-style: italic; opacity: .7; background: transparent; color: var(--muted); border-style: dashed; }
 .bubble p { margin: 0; white-space: pre-wrap; word-wrap: break-word; font-size: 16px; line-height: 1.4; }
 .bubble .time { font-size: 11px; opacity: .7; align-self: flex-end; }
+img.img-failed { min-height: 72px; padding: 10px; font-size: 13px; color: var(--muted); cursor: pointer; object-fit: none; }
 .chat-img { display: block; width: 240px; max-width: 100%; max-height: 320px; object-fit: cover; border-radius: 12px; margin: -2px -6px 0; background: rgba(0,0,0,.08); cursor: zoom-in; }
 .chat-file { display: flex; gap: 10px; align-items: center; min-width: 220px; }
 .chat-file .grow { display: flex; flex-direction: column; min-width: 0; }
 .chat-file b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bubble.mine .chat-file .small { color: inherit; opacity: .8; }
 .bubble.mine .chat-file .btn { color: var(--accent-ink); border-color: rgba(255,255,255,.5); }
-.msg-actions { align-self: flex-end; margin: -2px 6px 4px; }
+.bubble { touch-action: pan-y; transition: transform .2s ease-out; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.bubble:not(.pending) { cursor: pointer; }
+.bubble.swipe-ready { box-shadow: 0 0 0 2px var(--muted); }
+.bubble.flash { animation: flash 1.2s ease-out; }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: none; } }
+.quote { display: flex; flex-direction: column; gap: 1px; text-align: left; border: 0; border-left: 3px solid var(--accent); background: rgba(0,0,0,.06); color: inherit; font: 14px/1.3 var(--body); padding: 6px 10px; border-radius: 8px; margin: 0 -4px; cursor: pointer; max-width: 100%; min-width: 0; }
+.bubble.mine .quote { border-left-color: var(--accent-ink); background: rgba(255,255,255,.18); }
+.quote b { font-size: 13px; }
+.quote span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+.compose-ctx { flex-basis: 100%; order: -1; display: flex; align-items: center; gap: 10px; border-left: 3px solid var(--accent); background: var(--leaf); border-radius: 10px; padding: 6px 6px 6px 12px; min-width: 0; }
+.compose-ctx[hidden] { display: none; }
+.compose-ctx .grow { display: flex; flex-direction: column; min-width: 0; flex: 1; font-size: 14px; }
+.compose-ctx b { color: var(--accent); font-size: 13px; }
+.compose-ctx span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.ctx-x { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--paper); color: var(--ink); font-size: 20px; cursor: pointer; }
+.act-preview { margin: 0 40px 0 0; color: var(--muted); font-size: 15px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.msg-acts { display: flex; flex-direction: column; }
+.msg-act { display: flex; gap: 14px; align-items: center; border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); font: 600 17px var(--body); padding: 14px 4px; cursor: pointer; text-align: left; }
+.msg-act:first-child { border-top: 0; }
+.msg-act span { font-size: 20px; width: 26px; text-align: center; }
+.msg-act.danger { color: #C0392B; }
+@media (prefers-color-scheme: dark) { .msg-act.danger { color: #FF8A80; } }
 .seen { align-self: flex-end; font-size: 12px; color: var(--muted); margin: -2px 6px 4px; }
-.composer { position: fixed; left: 0; right: 0; bottom: calc(62px + env(safe-area-inset-bottom)); z-index: 5; display: flex; gap: 8px; align-items: flex-end; padding: 8px 12px; background: var(--paper); border-top: 1px solid var(--line); }
+.composer { flex-wrap: wrap; position: fixed; left: 0; right: 0; bottom: calc(62px + env(safe-area-inset-bottom)); z-index: 5; display: flex; gap: 8px; align-items: flex-end; padding: 8px 12px; background: var(--paper); border-top: 1px solid var(--line); }
 @media (min-width: 700px) { .composer { left: 50%; right: auto; width: 620px; transform: translateX(-50%); } }
 .composer textarea { flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); border-radius: 22px; padding: 10px 14px; font: 16px var(--body); background: var(--leaf); color: var(--ink); max-height: 140px; line-height: 1.35; }
 .composer textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 .attach-btn, .send-btn { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: var(--leaf); color: var(--ink); font: 600 24px var(--body); cursor: pointer; display: grid; place-items: center; }
 .send-btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-size: 18px; }
-.attach-menu { position: absolute; bottom: 62px; left: 12px; background: var(--leaf); border: 1px solid var(--line); border-radius: 16px; padding: 6px; display: flex; flex-direction: column; box-shadow: 0 14px 30px -12px rgba(42,21,48,.45); }
+.attach-menu { position: absolute; bottom: calc(100% + 6px); left: 12px; background: var(--leaf); border: 1px solid var(--line); border-radius: 16px; padding: 6px; display: flex; flex-direction: column; box-shadow: 0 14px 30px -12px rgba(42,21,48,.45); }
 .attach-menu button { display: flex; gap: 12px; align-items: center; border: 0; background: none; color: var(--ink); font: 600 16px var(--body); padding: 12px 16px; border-radius: 12px; cursor: pointer; text-align: left; }
 .attach-menu button:hover { background: var(--paper); }
 .attach-menu span { font-size: 22px; }

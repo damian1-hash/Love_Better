@@ -509,14 +509,28 @@ const VIRTUAL_DATES = [
 ];
 const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago"; };
 
-const photoUrls = {};
-async function photoUrl(id) {
-  if (photoUrls[id]) return photoUrls[id];
-  const res = await fetch("/api/us/photo?id=" + encodeURIComponent(id), { headers: { Authorization: "Bearer " + KEY } });
-  if (!res.ok) throw new Error("photo");
-  return (photoUrls[id] = URL.createObjectURL(await res.blob()));
+// Download a private picture once and keep it as a local URL. The download
+// itself is remembered (not just its result), so redrawing the screen while a
+// photo is still loading never starts a second copy. A failed download is
+// forgotten so it can be tried again, and is retried once on its own.
+function cachedBlobUrl(cache, url) {
+  if (cache[url]) return cache[url];
+  const get = () => fetch(url, { headers: { Authorization: "Bearer " + KEY } }).then(r => { if (!r.ok) throw new Error("download " + r.status); return r.blob(); });
+  const p = get().catch(() => new Promise(r => setTimeout(r, 1500)).then(get))
+    .then(b => URL.createObjectURL(b))
+    .catch(e => { delete cache[url]; throw e; });
+  return (cache[url] = p);
 }
-function loadImg(img, id) { photoUrl(id).then(u => { img.src = u; }).catch(() => { img.alt = "Couldn't load photo"; }); }
+// Show a picture, or a "tap to retry" note if it won't load.
+function showImg(img, getUrl, label) {
+  getUrl().then(u => { img.src = u; img.classList.remove("img-failed"); }).catch(() => {
+    img.alt = label + " didn't load. Tap to try again."; img.classList.add("img-failed");
+    img.addEventListener("click", e => { e.stopPropagation(); img.alt = "Loading…"; showImg(img, getUrl, label); }, { once: true, capture: true });
+  });
+}
+const photoUrls = {};
+const photoUrl = id => cachedBlobUrl(photoUrls, "/api/us/photo?id=" + encodeURIComponent(id));
+function loadImg(img, id) { showImg(img, () => photoUrl(id), "Photo"); }
 
 // Shrink a photo on the phone before upload (max 1280 px, under ~380 KB).
 async function compressPhoto(file) {
@@ -710,19 +724,109 @@ function watchSync() {
 
 
 /* ---------------- Chat ---------------- */
-const CH = { msgs: [], last: 0, partnerRead: 0, hasOlder: false, built: false, timer: null, loading: false, openMine: null };
+const CH = { msgs: [], last: 0, partnerRead: 0, hasOlder: false, built: false, timer: null, loading: false, reply: null, editing: null };
 const MAX_FILE = 3 * 1024 * 1024;
 const fileUrls = {};
-async function chatFileUrl(id) {
-  if (fileUrls[id]) return fileUrls[id];
-  const res = await fetch("/api/chat/file?id=" + encodeURIComponent(id), { headers: { Authorization: "Bearer " + KEY } });
-  if (!res.ok) throw new Error("file");
-  return (fileUrls[id] = URL.createObjectURL(await res.blob()));
-}
+const chatFileKey = id => "/api/chat/file?id=" + encodeURIComponent(id);
+const chatFileUrl = id => cachedBlobUrl(fileUrls, chatFileKey(id));
 const fmtSize = b => b < 1024 ? b + " B" : b < 1048576 ? Math.round(b / 1024) + " KB" : (b / 1048576).toFixed(1) + " MB";
 const readAsDataURL = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
 
-function chatReset() { clearTimeout(CH.timer); Object.assign(CH, { msgs: [], last: 0, partnerRead: 0, hasOlder: false, built: false, timer: null, edit: null }); }
+function chatReset() { clearTimeout(CH.timer); Object.assign(CH, { msgs: [], last: 0, partnerRead: 0, hasOlder: false, built: false, timer: null, edit: null, reply: null, editing: null }); }
+
+// A one-line summary of a message (or a reply's copy of one), for quotes and the action sheet.
+function msgSummary(m) {
+  const kind = m.kind || (m.file && m.file.kind);
+  if (m.text) return m.text;
+  return kind === "image" ? "📷 Photo" : kind === "video" ? "🎥 Video" : kind === "file" ? "📎 " + (m.name || (m.file && m.file.name) || "File") : "Message";
+}
+const whoName = uid => uid === S.me.id ? "You" : PartnerName();
+
+// The bar above the message box while replying to or editing a message.
+function drawComposerContext() {
+  const bar = $("composeCtx"); if (!bar) return;
+  const ctx = CH.editing ? { label: "Editing message", text: CH.editing.text || "" }
+    : CH.reply ? { label: "Replying to " + (CH.reply.from === S.me.id ? "yourself" : PartnerName()), text: msgSummary(CH.reply) } : null;
+  bar.hidden = !ctx;
+  if (!ctx) return bar.replaceChildren();
+  bar.replaceChildren(h("div", { class: "grow" }, h("b", { text: ctx.label }), h("span", { text: ctx.text })),
+    h("button", { type: "button", class: "ctx-x", "aria-label": CH.editing ? "Stop editing" : "Cancel reply", text: "×", onclick: () => {
+      if (CH.editing) { const ta = $("chatText"); ta.value = CH.editing.saved || ""; ta.style.height = "auto"; }
+      CH.editing = null; CH.reply = null; drawComposerContext();
+    } }));
+}
+function startReply(m) {
+  if (CH.editing) { const ta = $("chatText"); if (ta) ta.value = CH.editing.saved || ""; CH.editing = null; }
+  CH.reply = m; drawComposerContext();
+  const ta = $("chatText"); if (ta) ta.focus();
+}
+function startEdit(m) {
+  const ta = $("chatText"); if (!ta) return;
+  CH.reply = null; CH.editing = { seq: m.seq, text: m.text || "", saved: CH.editing ? CH.editing.saved : ta.value };
+  ta.value = m.text || ""; ta.style.height = "auto"; ta.style.height = Math.min(140, ta.scrollHeight) + "px";
+  drawComposerContext(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+function jumpTo(seq) {
+  const el = document.querySelector('.bubble[data-seq="' + seq + '"]');
+  if (!el) return toast("💬", "That message is further up. Tap “Load earlier messages”.");
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
+
+// Swipe a message to the right to reply to it. Press and hold for the options
+// (handy on photos, where a tap opens the photo).
+function addSwipe(el, m) {
+  let x0 = 0, y0 = 0, dx = 0, dir = null, on = false, hold = null;
+  const noHold = () => { clearTimeout(hold); hold = null; };
+  el.addEventListener("touchstart", e => {
+    const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; dx = 0; dir = null; on = true; el.style.transition = "none";
+    noHold(); hold = setTimeout(() => { hold = null; on = false; el.dataset.swiped = "1"; setTimeout(() => { delete el.dataset.swiped; }, 600); if (navigator.vibrate) navigator.vibrate(15); messageActions(m); }, 550);
+  }, { passive: true });
+  el.addEventListener("contextmenu", e => { if (e.target.closest("video")) return; e.preventDefault(); });
+  el.addEventListener("touchmove", e => {
+    if (!on) return;
+    const t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+    if (!dir && (Math.abs(mx) > 8 || Math.abs(my) > 8)) { dir = Math.abs(mx) > Math.abs(my) ? "x" : "y"; noHold(); }
+    if (dir !== "x") return;
+    dx = Math.max(0, Math.min(90, mx));
+    el.style.transform = "translateX(" + dx + "px)";
+    el.classList.toggle("swipe-ready", dx > 56);
+  }, { passive: true });
+  const end = () => {
+    noHold();
+    if (!on) return; on = false;
+    el.style.transition = ""; el.style.transform = ""; el.classList.remove("swipe-ready");
+    if (dx > 56) { el.dataset.swiped = "1"; setTimeout(() => { delete el.dataset.swiped; }, 400); if (navigator.vibrate) navigator.vibrate(10); startReply(m); }
+  };
+  el.addEventListener("touchend", end); el.addEventListener("touchcancel", end);
+}
+
+// Tap a message: reply, edit, copy, delete for me, delete for everyone.
+function messageActions(m) {
+  const mine = m.from === S.me.id, live = !m.deleted;
+  let close;
+  const act = (emoji, label, fn, cls) => h("button", { type: "button", class: "msg-act" + (cls ? " " + cls : ""), onclick: () => { close(); fn(); } }, h("span", { text: emoji }), label);
+  const del = async forMe => {
+    const q = forMe ? "Delete this message for you? " + PartnerName() + " will still see it." : "Delete this message for everyone? It disappears for both of you.";
+    if (!confirm(q)) return;
+    try {
+      await api("DELETE", "/api/chat?seq=" + m.seq + (forMe ? "&for=me" : ""));
+      if (forMe) CH.msgs = CH.msgs.filter(x => x !== m);
+      else { m.deleted = true; delete m.file; delete m.text; delete m.reply; delete m.edited; if (CH.edit != null) CH.edit++; }
+      if (CH.reply && CH.reply.seq === m.seq) { CH.reply = null; drawComposerContext(); }
+      if (CH.editing && CH.editing.seq === m.seq) { const ta = $("chatText"); ta.value = CH.editing.saved || ""; CH.editing = null; drawComposerContext(); }
+      drawMessages();
+    } catch (e) { toast("⚠️", e.message); }
+  };
+  close = sheet(
+    live ? h("p", { class: "act-preview", text: msgSummary(m) }) : null,
+    h("div", { class: "msg-acts" },
+      live ? act("↩️", "Reply", () => startReply(m)) : null,
+      live && mine ? act("✏️", "Edit", () => startEdit(m)) : null,
+      live && m.text ? act("📋", "Copy text", () => navigator.clipboard.writeText(m.text).then(() => toast("📋", "Copied.")).catch(() => toast("⚠️", "Couldn't copy here."))) : null,
+      act("🙈", "Delete for me", () => del(true), "danger"),
+      live && mine ? act("🗑️", "Delete for everyone", () => del(false), "danger") : null));
+}
 
 function buildChat() {
   const tab = $("tab-chat"); tab.replaceChildren();
@@ -740,15 +844,17 @@ function buildChat() {
     h("button", { type: "button", onclick: () => { menu.hidden = true; media.click(); } }, h("span", { text: "🖼️" }), "Photos & videos"),
     h("button", { type: "button", onclick: () => { menu.hidden = true; any.click(); } }, h("span", { text: "📎" }), "File"));
   const ta = h("textarea", { id: "chatText", rows: 1, maxlength: 4000, placeholder: "Message " + partnerName() + "…", "aria-label": "Message",
-    oninput: e => { saveDraft("chat", e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(140, e.target.scrollHeight) + "px"; },
+    oninput: e => { if (!CH.editing) saveDraft("chat", e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(140, e.target.scrollHeight) + "px"; },
     onkeydown: e => { if (e.key === "Enter" && !e.shiftKey && !/iphone|ipad|android/i.test(navigator.userAgent)) { e.preventDefault(); form.requestSubmit(); } } });
   ta.value = draft.chat || "";
   const form = h("form", { class: "composer", onsubmit: e => { e.preventDefault(); sendText(); } },
     h("button", { type: "button", class: "attach-btn", "aria-label": "Add a photo, video or file", "aria-expanded": "false", text: "+", onclick: e => { menu.hidden = !menu.hidden; e.currentTarget.setAttribute("aria-expanded", String(!menu.hidden)); } }),
+    h("div", { class: "compose-ctx", id: "composeCtx", hidden: true }),
     ta, h("button", { type: "submit", class: "send-btn", "aria-label": "Send", text: "➤" }), cam, media, any, menu);
-  tab.append(h("div", { class: "chat-head" }, h("img", { src: "logo-mark.png", alt: "", width: 32, height: 32 }), h("div", {}, h("b", { text: PartnerName() }), h("span", { class: "small", id: "chatSub", text: "Only the two of you can see this chat." }))),
+  tab.append(h("div", { class: "chat-head" }, h("img", { src: "logo-mark.png", alt: "", width: 32, height: 32 }), h("div", {}, h("b", { text: PartnerName() }), h("span", { class: "small", id: "chatSub", text: "Only the two of you can see this chat. Swipe a message to reply." }))),
     h("div", { class: "chat-list", id: "chatList", "aria-live": "polite" }), form);
   CH.built = true;
+  drawComposerContext();
   drawMessages(true);
   if (!CH.outsideClose) {   // tapping anywhere else closes the + menu
     CH.outsideClose = true;
@@ -763,23 +869,29 @@ function drawMessages(scroll) {
   if (CH.hasOlder) list.append(h("button", { class: "linkbtn older", text: "Load earlier messages", onclick: loadOlder }));
   if (!CH.msgs.length) list.append(h("p", { class: "chat-empty", text: CH.loading ? "Loading…" : "Say hi to " + partnerName() + " 👋" }));
   let lastDay = "", lastMine = [...CH.msgs].reverse().find(m => m.from === S.me.id && !m.deleted && !m.pending);
+  const bySeq = new Map(CH.msgs.filter(m => !m.pending).map(m => [m.seq, m]));
   for (const m of CH.msgs) {
     const d = new Date(m.at), day = d.toDateString();
     if (day !== lastDay) { lastDay = day; list.append(h("div", { class: "day-sep", text: day === new Date().toDateString() ? "Today" : d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" }) })); }
     const mine = m.from === S.me.id;
     const bubble = h("div", { class: "bubble" + (mine ? " mine" : "") + (m.deleted ? " gone" : "") + (m.pending ? " pending" : ""), "data-seq": m.seq });
-    if (m.deleted) bubble.append(h("span", { text: mine ? "You unsent a message" : "Message unsent" }));
+    if (m.deleted) bubble.append(h("span", { text: mine ? "You deleted this message" : "This message was deleted" }));
     else {
+      if (m.reply) {
+        // Show the original as it is now (it may have been edited or deleted), or the saved copy if it's not loaded.
+        const orig = bySeq.get(m.reply.seq);
+        bubble.append(h("button", { type: "button", class: "quote", onclick: () => jumpTo(m.reply.seq) },
+          h("b", { text: whoName(m.reply.from) }), h("span", { text: orig && orig.deleted ? "This message was deleted" : msgSummary(orig || m.reply) })));
+      }
       if (m.file) bubble.append(fileView(m.file));
       if (m.text) bubble.append(h("p", { text: m.text }));
     }
-    bubble.append(h("span", { class: "time", text: m.pending ? "Sending…" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) }));
-    if (mine && !m.deleted && !m.pending) bubble.addEventListener("click", ev => { if (ev.target.closest("a,button,video")) return; CH.openMine = CH.openMine === m.seq ? null : m.seq; drawMessages(); });
+    bubble.append(h("span", { class: "time", text: m.pending ? "Sending…" : (m.edited && !m.deleted ? "Edited · " : "") + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) }));
+    if (!m.pending) {
+      bubble.addEventListener("click", ev => { if (bubble.dataset.swiped || ev.target.closest("a,button,video,img")) return; messageActions(m); });
+      if (!m.deleted) addSwipe(bubble, m);
+    }
     list.append(bubble);
-    if (mine && CH.openMine === m.seq) list.append(h("div", { class: "msg-actions" }, h("button", { class: "linkbtn", text: "Unsend", onclick: async () => {
-      if (!confirm("Unsend this message? It disappears for both of you.")) return;
-      try { await api("DELETE", "/api/chat?seq=" + m.seq); m.deleted = true; delete m.file; delete m.text; CH.openMine = null; if (CH.edit != null) CH.edit++; drawMessages(); } catch (e) { toast("⚠️", e.message); }
-    } })));
     if (lastMine && m === lastMine && CH.partnerRead >= m.seq) list.append(h("div", { class: "seen", text: "Seen" }));
   }
   if (scroll || nearBottom) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
@@ -788,8 +900,8 @@ function drawMessages(scroll) {
 function fileView(f) {
   if (f.kind === "image") {
     const img = h("img", { class: "chat-img", alt: f.name, style: f.w && f.h ? "aspect-ratio:" + f.w + "/" + f.h : null });
-    chatFileUrl(f.id).then(u => { img.src = u; }).catch(() => { img.alt = "Couldn't load photo"; });
-    img.addEventListener("click", () => { const big = h("img", { class: "photo-big", alt: f.name }); chatFileUrl(f.id).then(u => { big.src = u; }); sheet(big, h("a", { class: "btn small", href: "#", text: "Save photo", onclick: e => { e.preventDefault(); download(f); } })); });
+    showImg(img, () => chatFileUrl(f.id), "Photo");
+    img.addEventListener("click", () => { const b = img.closest(".bubble"); if ((b && b.dataset.swiped) || img.classList.contains("img-failed")) return; if (img.classList.contains("img-failed")) return; const big = h("img", { class: "photo-big", alt: f.name }); chatFileUrl(f.id).then(u => { big.src = u; }); sheet(big, h("a", { class: "btn small", href: "#", text: "Save photo", onclick: e => { e.preventDefault(); download(f); } })); });
     return img;
   }
   if (f.kind === "video") {
@@ -857,10 +969,13 @@ function openChat() {
 }
 
 async function postMessage(body, pendingView) {
-  const temp = { id: "tmp" + Math.random(), pending: true, from: S.me.id, at: Date.now(), text: body.text || "", file: pendingView || null };
+  const temp = { id: "tmp" + Math.random(), pending: true, from: S.me.id, at: Date.now(), text: body.text || "", file: pendingView || null, reply: body.reply || null };
+  delete body.reply;
   CH.msgs.push(temp); drawMessages(true);
   try {
     const m = await api("POST", "/api/chat", body);
+    // Your own photo is already on this phone: show it straight away instead of downloading it back.
+    if (m.file && m.file.kind === "image" && body.file && body.file.data) fileUrls[chatFileKey(m.file.id)] = Promise.resolve(body.file.data);
     CH.msgs = CH.msgs.filter(x => x !== temp && x.seq !== m.seq); CH.msgs.push(m); CH.msgs.sort((a, b) => a.seq - b.seq);
     CH.last = Math.max(CH.last, m.seq); drawMessages(true);
     return true;
@@ -868,14 +983,34 @@ async function postMessage(body, pendingView) {
     CH.msgs = CH.msgs.filter(x => x !== temp); drawMessages(); toast("⚠️", e.message || "Couldn't send. Try again."); return false;
   }
 }
+// The message being replied to goes with the next message sent, then the reply bar clears.
+function takeReply() {
+  const r = CH.reply; CH.reply = null; drawComposerContext();
+  return r ? { replyTo: r.seq, reply: { seq: r.seq, from: r.from, text: r.text || "", kind: r.file ? r.file.kind : null, name: r.file ? r.file.name : undefined } } : {};
+}
+async function saveEdit() {
+  const ta = $("chatText"), ed = CH.editing, text = ta.value.trim();
+  const m = CH.msgs.find(x => x.seq === ed.seq && !x.pending);
+  if (!text && !(m && m.file)) return toast("✏️", "A message can't be empty. Delete it instead.");
+  try {
+    const before = m && m.edited, out = await api("PATCH", "/api/chat", { seq: ed.seq, text });
+    if (m) Object.assign(m, out);
+    // Our own edit bumps the "something changed" counter; count it so we don't reload for nothing.
+    if (CH.edit != null && out.edited && out.edited !== before) CH.edit++;
+    ta.value = ed.saved || ""; ta.style.height = "auto"; CH.editing = null;
+    drawComposerContext(); drawMessages();
+  } catch (e) { toast("⚠️", e.message || "Couldn't save that edit."); }
+}
 async function sendText() {
+  if (CH.editing) return saveEdit();
   const ta = $("chatText"), text = ta.value.trim();
   if (!text) return;
   ta.value = ""; ta.style.height = "auto"; delete draft.chat; ls.set("lb-drafts", draft);
-  if (!(await postMessage({ text }))) { ta.value = text; saveDraft("chat", text); }
+  const r = takeReply();
+  if (!(await postMessage({ text, ...r }))) { ta.value = text; saveDraft("chat", text); }
 }
 async function sendFile(f) {
-  const ta = $("chatText"), text = ta.value.trim();
+  const ta = $("chatText"); let text = ta.value.trim();
   try {
     let file;
     if (/^image\/(jpeg|png|webp|heic|heif)$/i.test(f.type) || (!f.type && /\.(heic|heif)$/i.test(f.name))) {
@@ -886,8 +1021,9 @@ async function sendFile(f) {
       file = { name: f.name || "file", type: f.type || "application/octet-stream", data: await readAsDataURL(f) };
       if (f.type.startsWith("image/")) { try { const b = await createImageBitmap(f); file.w = b.width; file.h = b.height; } catch (e) {} }
     }
-    if (text) { ta.value = ""; delete draft.chat; ls.set("lb-drafts", draft); }
-    await postMessage({ text, file }, { kind: "file", name: (file.type.startsWith("video/") ? "🎥 " : file.type.startsWith("image/") ? "📷 " : "") + file.name, size: f.size, id: "pending" });
+    if (CH.editing) text = "";   // the words being edited stay put; the photo goes on its own
+    else if (text) { ta.value = ""; delete draft.chat; ls.set("lb-drafts", draft); }
+    await postMessage({ text, file, ...takeReply() }, { kind: "file", name: (file.type.startsWith("video/") ? "🎥 " : file.type.startsWith("image/") ? "📷 " : "") + file.name, size: f.size, id: "pending" });
   } catch (e) { toast("⚠️", e.message || "Couldn't send that file."); }
 }
 
@@ -1386,7 +1522,9 @@ function renderAll() {
   if (tabEl && editing(tabEl)) { pendingRender = true; }
   else if (S.tab === "us") renderUs();
   else if (S.tab === "me") renderMe();
-  else if (S.tab === "chat") { if (!CH.built || !$("chatList") || !linked()) buildChat(); }
+  // Opening the app straight onto Chat (or from a chat notification) builds the
+  // screen before we know you're linked, so start loading messages once we do.
+  else if (S.tab === "chat") { if (!CH.built || !$("chatList") || !linked()) { buildChat(); if (linked()) openChat(); } }
   else if (S.tab === "explore") renderExplore();
   if (S.tab === "today" && window.render) window.render();
   $("meDot").hidden = !(S.me && !linked() && !S.setup);
